@@ -20,13 +20,29 @@ class GroqAIService
 
     public function generateThesisOutline(string $topic, string $type = 'thesis'): array
     {
-        $systemPrompt = $this->getSystemPrompt();
-        
-        $userPrompt = "Generate a detailed academic {$type} outline for the topic: {$topic}. ";
-        $userPrompt .= "Include all major chapters (Abstract, Introduction, Literature Review, Methodology, Results, Discussion, Conclusion). ";
-        $userPrompt .= "For each chapter, provide 3-5 subsections. Format as JSON with chapter titles and subsections array.";
+        $systemPrompt = <<<EOT
+    You are an academic writing expert. You MUST respond with ONLY valid JSON. No explanations, no markdown, just JSON.
 
-        return $this->callGroqAPI($systemPrompt, $userPrompt);
+    The JSON structure must be:
+    {
+        "chapters": [
+            {
+                "title": "Chapter Title",
+                "subsections": [
+                    "Subsection 1",
+                    "Subsection 2"
+                ]
+            }
+        ]
+    }
+    EOT;
+
+        $userPrompt = "Generate a detailed academic {$type} outline for: {$topic}\n\n";
+        $userPrompt .= "Include these chapters: Abstract, Introduction, Literature Review, Methodology, Results, Discussion, Conclusion.\n";
+        $userPrompt .= "Each chapter should have 3-5 subsections.\n";
+        $userPrompt .= "RESPOND WITH ONLY JSON. NO OTHER TEXT.";
+
+        return $this->callGroqAPI($systemPrompt, $userPrompt, 1500);
     }
 
     public function generateSection(string $sectionTitle, string $context, string $citationStyle = 'APA7'): array
