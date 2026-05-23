@@ -92,7 +92,7 @@ class GroqAIService
         return $this->callGroqAPI($systemPrompt, end($formattedMessages)['content'], 2000, $formattedMessages);
     }
 
-    protected function callGroqAPI(string $systemPrompt, string $userPrompt, int $maxTokens = 1500, array $messages = null): array
+    public function callGroqAPI(string $systemPrompt, string $userPrompt, int $maxTokens = 1500, array $messages = null): array
     {
         try {
             if (!$messages) {

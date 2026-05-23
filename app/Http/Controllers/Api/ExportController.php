@@ -17,9 +17,12 @@ class ExportController extends Controller
         $this->exportService = $exportService;
     }
 
-    public function pdf($projectId): JsonResponse
+    /**
+     * Export project as PDF
+     */
+    public function pdf($projectUuid): JsonResponse
     {
-        $project = NuruxploreProject::findOrFail($projectId);
+        $project = NuruxploreProject::where('uuid', $projectUuid)->firstOrFail();
         
         if ($project->user_id !== request()->user()->id) {
             return response()->json(['message' => 'Unauthorized'], 403);
@@ -35,9 +38,12 @@ class ExportController extends Controller
         ]);
     }
 
-    public function word($projectId): JsonResponse
+    /**
+     * Export project as Word document
+     */
+    public function word($projectUuid): JsonResponse
     {
-        $project = NuruxploreProject::findOrFail($projectId);
+        $project = NuruxploreProject::where('uuid', $projectUuid)->firstOrFail();
         
         if ($project->user_id !== request()->user()->id) {
             return response()->json(['message' => 'Unauthorized'], 403);

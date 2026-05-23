@@ -8,7 +8,6 @@ use App\Models\NuruxploreProject;
 use App\Services\GroqAIService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\Log;
 
 class SectionController extends Controller
 {
@@ -19,9 +18,12 @@ class SectionController extends Controller
         $this->aiService = $aiService;
     }
 
-    public function index($projectId): JsonResponse
+    /**
+     * List all sections for a project
+     */
+    public function index($projectUuid): JsonResponse
     {
-        $project = NuruxploreProject::findOrFail($projectId);
+        $project = NuruxploreProject::where('uuid', $projectUuid)->firstOrFail();
         
         if ($project->user_id !== request()->user()->id) {
             return response()->json(['message' => 'Unauthorized'], 403);
@@ -41,6 +43,7 @@ class SectionController extends Controller
                     'word_count' => $section->word_count,
                     'order' => $section->order,
                     'has_content' => !empty($section->content),
+                    'content' => $section->content,
                     'children' => $section->children->map(fn($child) => [
                         'id' => $child->id,
                         'title' => $child->title,
@@ -49,6 +52,7 @@ class SectionController extends Controller
                         'word_count' => $child->word_count,
                         'order' => $child->order,
                         'has_content' => !empty($child->content),
+                        'content' => $child->content,
                     ]),
                 ];
             });
@@ -60,6 +64,44 @@ class SectionController extends Controller
         ]);
     }
 
+    /**
+     * Create a new section
+     */
+    public function store(Request $request, $projectUuid): JsonResponse
+    {
+        $project = NuruxploreProject::where('uuid', $projectUuid)->firstOrFail();
+        
+        if ($project->user_id !== $request->user()->id) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $validated = $request->validate([
+            'title' => 'required|string|max:255',
+            'section_number' => 'nullable|string|max:20',
+            'parent_id' => 'nullable|exists:nuruxplore_sections,id',
+            'order' => 'nullable|integer',
+        ]);
+
+        $maxOrder = NuruxploreSection::where('project_id', $project->id)
+            ->where('parent_id', $validated['parent_id'] ?? null)
+            ->max('order') ?? 0;
+
+        $section = $project->sections()->create([
+            'title' => $validated['title'],
+            'section_number' => $validated['section_number'] ?? null,
+            'parent_id' => $validated['parent_id'] ?? null,
+            'order' => $validated['order'] ?? $maxOrder + 1,
+            'status' => 'outlined',
+        ]);
+
+        $project->update(['last_edited_at' => now()]);
+
+        return response()->json($section, 201);
+    }
+
+    /**
+     * Get a single section
+     */
     public function show($id): JsonResponse
     {
         $section = NuruxploreSection::with(['children', 'parent', 'project'])->findOrFail($id);
@@ -70,10 +112,18 @@ class SectionController extends Controller
 
         return response()->json([
             'section' => $section,
-            'project' => $section->project->only(['id', 'title', 'citation_style']),
+            'project' => [
+                'id' => $section->project->id,
+                'uuid' => $section->project->uuid,
+                'title' => $section->project->title,
+                'citation_style' => $section->project->citation_style,
+            ],
         ]);
     }
 
+    /**
+     * Update a section
+     */
     public function update(Request $request, $id): JsonResponse
     {
         $section = NuruxploreSection::findOrFail($id);
@@ -96,6 +146,9 @@ class SectionController extends Controller
         return response()->json($section->fresh());
     }
 
+    /**
+     * Delete a section
+     */
     public function destroy($id): JsonResponse
     {
         $section = NuruxploreSection::findOrFail($id);
@@ -109,6 +162,9 @@ class SectionController extends Controller
         return response()->json(null, 204);
     }
 
+    /**
+     * Reorder sections
+     */
     public function reorder(Request $request): JsonResponse
     {
         $validated = $request->validate([
@@ -148,7 +204,7 @@ class SectionController extends Controller
             ], 402);
         }
 
-        // Build context
+        // Build context for AI
         $context = "Project: {$project->title}\n";
         $context .= "Type: {$project->type}\n";
         $context .= "Citation Style: {$project->citation_style}\n";
@@ -193,6 +249,9 @@ class SectionController extends Controller
         ]);
     }
 
+    /**
+     * AI-Powered Section Revision
+     */
     public function aiRevise(Request $request, $id): JsonResponse
     {
         $section = NuruxploreSection::with('project')->findOrFail($id);

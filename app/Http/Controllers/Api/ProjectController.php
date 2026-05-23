@@ -6,95 +6,103 @@ use App\Http\Controllers\Controller;
 use App\Models\NuruxploreProject;
 use App\Models\NuruxploreVersion;
 use App\Services\GroqAIService;
+use App\Services\NuruAIService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Str;
 
 class ProjectController extends Controller
 {
     protected GroqAIService $aiService;
+    protected NuruAIService $nuruAI;
 
-    public function __construct(GroqAIService $aiService)
+    public function __construct(GroqAIService $aiService, NuruAIService $nuruAI)
     {
         $this->aiService = $aiService;
+        $this->nuruAI = $nuruAI;
     }
 
     public function index(): JsonResponse
-    {
-        $projects = request()->user()->projects()
-            ->withCount('sections')
-            ->latest('last_edited_at')
-            ->get()
-            ->map(fn($project) => [
-                'id' => $project->id,
-                'title' => $project->title,
-                'type' => $project->type,
-                'status' => $project->status,
-                'word_count' => $project->word_count,
-                'citation_style' => $project->citation_style,
-                'sections_count' => $project->sections_count,
-                'last_edited_at' => $project->last_edited_at?->diffForHumans(),
-                'created_at' => $project->created_at->format('M d, Y'),
-            ]);
-
-        return response()->json($projects);
-    }
-
-    public function store(Request $request): JsonResponse
-    {
-        $validated = $request->validate([
-            'title' => 'required|string|max:255',
-            'type' => 'required|in:thesis,dissertation,literature_review,lab_report,case_study,capstone',
-            'citation_style' => 'in:APA7,MLA,Chicago,IEEE',
-            'description' => 'nullable|string|max:1000',
-            'research_question' => 'nullable|string|max:1000',
-        ]);
-
-        $project = $request->user()->projects()->create([
-            ...$validated,
-            'status' => 'draft',
-            'last_edited_at' => now(),
-        ]);
-
-        // Create initial version
-        NuruxploreVersion::create([
-            'project_id' => $project->id,
-            'user_id' => $request->user()->id,
-            'version_number' => 1,
-            'snapshot' => ['project' => $project->toArray(), 'sections' => []],
-            'changes_description' => 'Project created',
-            'change_type' => 'manual',
-        ]);
-
-        return response()->json([
+{
+    $projects = request()->user()->projects()
+        ->latest('last_edited_at')
+        ->get()
+        ->map(fn($project) => [
             'id' => $project->id,
+            'uuid' => $project->uuid,
             'title' => $project->title,
-            'message' => 'Project created successfully',
-        ], 201);
-    }
+            'type' => $project->type,
+            'status' => $project->status,
+            'word_count' => $project->word_count,
+            'citation_style' => $project->citation_style,
+            'last_edited_at' => $project->last_edited_at?->diffForHumans(),
+            'created_at' => $project->created_at->format('M d, Y'),
+        ]);
 
-    public function show($id): JsonResponse
+    return response()->json($projects);
+}
+
+   public function store(Request $request): JsonResponse
+{
+    $validated = $request->validate([
+        'title' => 'required|string|max:255',
+        'type' => 'required|in:thesis,dissertation,literature_review,lab_report,case_study,capstone',
+        'citation_style' => 'in:APA7,MLA,Chicago,IEEE',
+        'description' => 'nullable|string|max:1000',
+        'research_question' => 'nullable|string|max:1000',
+    ]);
+
+    $project = $request->user()->projects()->create([
+        ...$validated,
+        'uuid' => (string) Str::uuid(),
+        'status' => 'draft',
+        'last_edited_at' => now(),
+    ]);
+
+    // Create initial version (no sections reference)
+    NuruxploreVersion::create([
+        'project_id' => $project->id,
+        'user_id' => $request->user()->id,
+        'version_number' => 1,
+        'snapshot' => ['content' => null, 'word_count' => 0],
+        'changes_description' => 'Project created',
+        'change_type' => 'manual',
+    ]);
+
+    return response()->json([
+        'id' => $project->id,
+        'uuid' => $project->uuid,
+        'title' => $project->title,
+        'message' => 'Project created successfully',
+    ], 201);
+}
+
+    // show() - Laravel automatically resolves by UUID
+    public function show(NuruxploreProject $project): JsonResponse
     {
-        $project = NuruxploreProject::with([
-            'sections' => fn($q) => $q->orderBy('order')->with('children'),
-            'sources',
-            'versions' => fn($q) => $q->latest()->limit(10)
-        ])->findOrFail($id);
-
-        // Authorization check
         if ($project->user_id !== request()->user()->id) {
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
         return response()->json([
-            'project' => $project,
-            'outline' => $project->structure,
+            'project' => [
+                'id' => $project->id,
+                'uuid' => $project->uuid,
+                'title' => $project->title,
+                'type' => $project->type,
+                'citation_style' => $project->citation_style,
+                'word_count' => $project->word_count,
+                'status' => $project->status,
+                'content' => $project->content, // ← Make sure this is here
+                'structure' => $project->structure,
+                'last_edited_at' => $project->last_edited_at?->diffForHumans(),
+            ],
         ]);
     }
 
-    public function update(Request $request, $id): JsonResponse
+    // update() - Laravel automatically resolves by UUID
+    public function update(Request $request, NuruxploreProject $project): JsonResponse
     {
-        $project = NuruxploreProject::findOrFail($id);
-
         if ($project->user_id !== $request->user()->id) {
             return response()->json(['message' => 'Unauthorized'], 403);
         }
@@ -112,22 +120,23 @@ class ProjectController extends Controller
         return response()->json($project);
     }
 
-    public function destroy($id): JsonResponse
+    // destroy() - Laravel automatically resolves by UUID
+    public function destroy(NuruxploreProject $project): JsonResponse
     {
-        $project = NuruxploreProject::findOrFail($id);
-
         if ($project->user_id !== request()->user()->id) {
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
         $project->delete();
-
         return response()->json(null, 204);
     }
 
-    public function duplicate($id): JsonResponse
+    // duplicate() - uses explicit UUID lookup
+    public function duplicate($uuid): JsonResponse
     {
-        $original = NuruxploreProject::with('sections', 'sources')->findOrFail($id);
+        $original = NuruxploreProject::where('uuid', $uuid)
+            ->with('sections', 'sources')
+            ->firstOrFail();
 
         if ($original->user_id !== request()->user()->id) {
             return response()->json(['message' => 'Unauthorized'], 403);
@@ -137,6 +146,7 @@ class ProjectController extends Controller
         $duplicate->title = $original->title . ' (Copy)';
         $duplicate->status = 'draft';
         $duplicate->last_edited_at = now();
+        $duplicate->uuid = (string) Str::uuid();
         $duplicate->save();
 
         foreach ($original->sections as $section) {
@@ -147,16 +157,15 @@ class ProjectController extends Controller
 
         return response()->json([
             'id' => $duplicate->id,
+            'uuid' => $duplicate->uuid,
             'message' => 'Project duplicated successfully'
         ], 201);
     }
 
-    /**
-     * AI-Powered Outline Generation
-     */
-    public function generateOutline(Request $request, $id): JsonResponse
+    // generateOutline() - uses UUID
+    public function generateOutline(Request $request, $uuid): JsonResponse
     {
-        $project = NuruxploreProject::findOrFail($id);
+        $project = NuruxploreProject::where('uuid', $uuid)->firstOrFail();
         
         if ($project->user_id !== $request->user()->id) {
             return response()->json(['message' => 'Unauthorized'], 403);
@@ -165,63 +174,65 @@ class ProjectController extends Controller
         $user = $request->user();
         if ($user->credits_balance < 5) {
             return response()->json([
-                'message' => 'Insufficient credits. You need 5 credits to generate an outline.',
+                'message' => 'Insufficient credits. You need 5 credits.',
                 'credits_balance' => $user->credits_balance,
             ], 402);
         }
 
         $topic = $request->input('topic', $project->title);
-        
-        // Generate outline with AI
         $result = $this->aiService->generateThesisOutline($topic, $project->type);
 
         if (!$result['success']) {
-            return response()->json([
-                'message' => $result['error'],
-                'debug' => config('app.debug') ? $result : null,
-            ], 500);
+            return response()->json(['message' => $result['error']], 500);
         }
 
-        // Parse AI response
         $outline = $this->parseOutlineFromAI($result['content']);
-
-        // Deduct credits
         $user->deductCredits(5, 'Outline generation', $project->id);
-
-        // Save outline as project structure
-        $project->update([
-            'structure' => $outline,
-            'last_edited_at' => now(),
-        ]);
-
-        // Delete existing sections before creating new ones
-        \App\Models\NuruxploreSection::where('project_id', $project->id)->delete();
-
-        // Create sections from outline
+        $project->update(['structure' => $outline, 'last_edited_at' => now()]);
+        
+        NuruxploreSection::where('project_id', $project->id)->delete();
         $this->createSectionsFromOutline($project, $outline);
 
-        // Create version
-        $latestVersion = $project->versions()->max('version_number') ?? 0;
-        \App\Models\NuruxploreVersion::create([
-            'project_id' => $project->id,
-            'user_id' => $user->id,
-            'version_number' => $latestVersion + 1,
-            'snapshot' => [
-                'project' => $project->fresh()->toArray(),
-                'sections' => $project->sections()->get()->toArray(),
-            ],
-            'changes_description' => 'AI outline generated',
-            'change_type' => 'ai_generation',
-            'ai_interaction_log' => ['outline' => $outline],
-        ]);
-
-        // Return structured response
         return response()->json([
             'success' => true,
             'outline' => $outline,
             'sections' => $project->fresh()->sections()->whereNull('parent_id')->get()->values(),
             'credits_remaining' => $user->fresh()->credits_balance,
             'message' => 'Outline generated successfully with ' . count($outline) . ' chapters.',
+        ]);
+    }
+
+    // generateComplete() - uses UUID
+    public function generateComplete(Request $request, NuruxploreProject $project): JsonResponse
+    {
+        if ($project->user_id !== $request->user()->id) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $user = $request->user();
+        if ($user->credits_balance < 25) {
+            return response()->json([
+                'message' => 'Insufficient credits. Need 25 credits.', 
+                'credits_balance' => $user->credits_balance
+            ], 402);
+        }
+
+        $topic = $request->input('topic', $project->title);
+        $user->deductCredits(25, 'Complete thesis generation', $project->id);
+        
+        $steps = $this->nuruAI->generateCompleteThesis($project, $topic);
+
+        return response()->json([
+            'success' => true,
+            'steps' => $steps,
+            'project_uuid' => $project->uuid,
+            'project' => [
+                'uuid' => $project->uuid,
+                'title' => $project->fresh()->title,
+                'content' => $project->fresh()->content,
+                'word_count' => $project->fresh()->word_count,
+            ],
+            'credits_remaining' => $user->fresh()->credits_balance,
         ]);
     }
 
@@ -357,5 +368,4 @@ class ProjectController extends Controller
             $chapterNum++;
         }
     }
-
 }

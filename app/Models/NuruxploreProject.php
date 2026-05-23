@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Str;
 
 class NuruxploreProject extends Model
 {
@@ -13,6 +14,7 @@ class NuruxploreProject extends Model
 
     protected $fillable = [
         'user_id',
+        'uuid',
         'title',
         'type',
         'citation_style',
@@ -28,6 +30,19 @@ class NuruxploreProject extends Model
         'structure' => 'array',
         'last_edited_at' => 'datetime',
     ];
+
+    protected static function booted()
+    {
+        static::creating(function ($project) {
+            $project->uuid = (string) Str::uuid();
+        });
+    }
+
+    // Route binding by UUID
+    public function getRouteKeyName(): string
+    {
+        return 'uuid';
+    }
 
     public function user(): BelongsTo
     {

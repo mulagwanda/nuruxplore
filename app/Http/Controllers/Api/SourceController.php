@@ -11,9 +11,12 @@ use Illuminate\Support\Facades\Storage;
 
 class SourceController extends Controller
 {
-    public function index($projectId): JsonResponse
+    /**
+     * List all sources for a project
+     */
+    public function index($projectUuid): JsonResponse
     {
-        $project = NuruxploreProject::findOrFail($projectId);
+        $project = NuruxploreProject::where('uuid', $projectUuid)->firstOrFail();
         
         if ($project->user_id !== request()->user()->id) {
             return response()->json(['message' => 'Unauthorized'], 403);
@@ -39,9 +42,12 @@ class SourceController extends Controller
         return response()->json(['sources' => $sources]);
     }
 
-    public function store(Request $request, $projectId): JsonResponse
+    /**
+     * Add a new source to a project
+     */
+    public function store(Request $request, $projectUuid): JsonResponse
     {
-        $project = NuruxploreProject::findOrFail($projectId);
+        $project = NuruxploreProject::where('uuid', $projectUuid)->firstOrFail();
         
         if ($project->user_id !== $request->user()->id) {
             return response()->json(['message' => 'Unauthorized'], 403);
@@ -73,6 +79,9 @@ class SourceController extends Controller
         ], 201);
     }
 
+    /**
+     * Upload a file as a source
+     */
     public function upload(Request $request): JsonResponse
     {
         $validated = $request->validate([
@@ -104,6 +113,9 @@ class SourceController extends Controller
         ], 201);
     }
 
+    /**
+     * Verify a source
+     */
     public function verify($id): JsonResponse
     {
         $source = NuruxploreSource::findOrFail($id);
@@ -120,7 +132,7 @@ class SourceController extends Controller
             ], 402);
         }
 
-        // Simulate verification (CrossRef integration in future)
+        // Simulate verification
         $verified = !empty($source->doi);
         
         $source->update([
@@ -136,6 +148,9 @@ class SourceController extends Controller
         ]);
     }
 
+    /**
+     * Delete a source
+     */
     public function destroy($id): JsonResponse
     {
         $source = NuruxploreSource::findOrFail($id);
