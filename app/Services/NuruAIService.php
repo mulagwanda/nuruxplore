@@ -33,19 +33,31 @@ class NuruAIService
         $steps[0]['status'] = 'completed';
         $steps[0]['message'] = '✅ ' . $smartTitle;
 
-        // Step 2: Generate complete document
-        $steps[] = ['step' => 'document', 'status' => 'processing', 'message' => '📝 Writing thesis...'];
+        // Step 2: Generate complete document — ENHANCED for larger output
+        $steps[] = ['step' => 'document', 'status' => 'processing', 'message' => '📝 Writing comprehensive thesis...'];
         
-        $systemPrompt = "Generate a complete academic thesis in Markdown. ";
-        $systemPrompt .= "Use ## for section headings. ";
-        $systemPrompt .= "Sections: Abstract, Introduction, Literature Review, Methodology, Results, Discussion, Conclusion, References. ";
-        $systemPrompt .= "Include inline citations [Author, Year]. ";
-        $systemPrompt .= "Write 2000-3500 words. Citation style: {$project->citation_style}.";
+        $systemPrompt = "You are an academic thesis writer. Generate a COMPREHENSIVE, DETAILED thesis in Markdown format.\n\n";
+        $systemPrompt .= "REQUIREMENTS:\n";
+        $systemPrompt .= "- Use ## for ALL section headings\n";
+        $systemPrompt .= "- Sections: Abstract, Introduction, Literature Review, Methodology, Results, Discussion, Conclusion, References\n";
+        $systemPrompt .= "- Each section MUST be THOROUGH and SUBSTANTIVE — not surface-level\n";
+        $systemPrompt .= "- Introduction: 800-1200 words with background, problem statement, objectives, research questions, significance\n";
+        $systemPrompt .= "- Literature Review: 1000-1500 words with theoretical framework, empirical review, research gaps, conceptual framework\n";
+        $systemPrompt .= "- Methodology: 600-900 words with design, population, sampling, data collection, analysis, ethics\n";
+        $systemPrompt .= "- Results: 500-800 words with findings and analysis\n";
+        $systemPrompt .= "- Discussion: 600-900 words with interpretation, comparison, implications, limitations\n";
+        $systemPrompt .= "- Conclusion: 400-600 words with summary, recommendations, future research\n";
+        $systemPrompt .= "- Use inline citations [Author, Year] throughout ALL sections\n";
+        $systemPrompt .= "- Include a COMPLETE References section at the end with full citations\n";
+        $systemPrompt .= "- Citation style: {$project->citation_style}\n";
+        $systemPrompt .= "- TOTAL: 5000-7000 words\n";
+        $systemPrompt .= "- Academic tone, formal language, well-structured paragraphs\n";
+        $systemPrompt .= "- Make EVERY section substantive with detailed analysis";
         
         $result = $this->groq->callGroqAPI(
             $systemPrompt,
-            "Write a complete {$project->type} titled: {$smartTitle}",
-            4000
+            "Write a COMPREHENSIVE {$project->type} titled: {$smartTitle}\n\nMake it detailed and thorough. Each section should be substantial. Aim for 5000-7000 words total.",
+            8000
         );
         
         $document = $result['content'] ?? '';
@@ -193,7 +205,6 @@ class NuruAIService
             }
         }
         
-        // Section + action + no chat signal = edit
         if ($mentionsSection && $hasAction && !$isChat) {
             $isEdit = true;
         }
@@ -282,7 +293,7 @@ class NuruAIService
     }
 
     /**
-     * Handle document edit
+     * Handle document edit — ENHANCED to preserve detail
      */
     protected function handleEdit(NuruxploreProject $project, string $userMessage, string $currentDocument): array
     {
@@ -296,18 +307,23 @@ class NuruAIService
             ->implode("\n");
         
         $systemPrompt = "You are an academic editor. Revise the COMPLETE thesis based on the user's instruction. ";
-        $systemPrompt .= "Return the ENTIRE revised thesis in Markdown with ## section headings. ";
-        $systemPrompt .= "CRITICAL: Keep ALL unchanged sections EXACTLY as they are. Only modify what the user asked for. ";
-        $systemPrompt .= "Sections: Abstract, Introduction, Literature Review, Methodology, Results, Discussion, Conclusion, References. ";
-        $systemPrompt .= "Use inline citations [Author, Year]. Maintain {$project->citation_style} format. ";
-        $systemPrompt .= "DO NOT add a References section to every chapter - only at the end.";
+        $systemPrompt .= "Return the ENTIRE revised thesis in Markdown with ## section headings.\n\n";
+        $systemPrompt .= "CRITICAL RULES:\n";
+        $systemPrompt .= "1. Keep ALL unchanged sections EXACTLY as they are — do NOT summarize or shorten them\n";
+        $systemPrompt .= "2. Only modify what the user explicitly asked for\n";
+        $systemPrompt .= "3. Maintain the SAME level of detail and word count for unchanged sections\n";
+        $systemPrompt .= "4. When adding content, be THOROUGH and SUBSTANTIVE — not brief\n";
+        $systemPrompt .= "5. Use inline citations [Author, Year]\n";
+        $systemPrompt .= "6. Maintain {$project->citation_style} format\n";
+        $systemPrompt .= "7. Sections: Abstract, Introduction, Literature Review, Methodology, Results, Discussion, Conclusion, References\n";
+        $systemPrompt .= "8. Do NOT add a References section to every chapter — only at the end";
         
         $userPrompt = "CONVERSATION HISTORY:\n{$recentMessages}\n\n";
         $userPrompt .= "CURRENT THESIS:\n\n{$currentDocument}\n\n";
         $userPrompt .= "USER INSTRUCTION: {$userMessage}\n\n";
-        $userPrompt .= "Return the COMPLETE revised thesis. Keep unchanged sections exactly as-is.";
+        $userPrompt .= "Return the COMPLETE revised thesis. Keep unchanged sections exactly as-is with their full detail.";
         
-        $result = $this->groq->callGroqAPI($systemPrompt, $userPrompt, 4000);
+        $result = $this->groq->callGroqAPI($systemPrompt, $userPrompt, 8000);
         
         $newDocument = $result['content'] ?? $currentDocument;
         

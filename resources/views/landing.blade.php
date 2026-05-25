@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -153,6 +153,37 @@
             .demo-window { max-width: 100%; }
             .demo-body { min-height: 240px; font-size: 11px; }
         }
+
+        /* Light Mode */
+[data-theme="light"] body { background: #fafaf7; color: #0a0a0a; }
+[data-theme="light"] .nav-blur { background: rgba(250,250,247,0.9); border-bottom: 1px solid #e8e6e0; }
+[data-theme="light"] .text-gradient { 
+    background: linear-gradient(135deg, #7c5cff, #3aa0ff);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+[data-theme="light"] .btn-primary { box-shadow: 0 4px 20px rgba(124,92,255,0.2); }
+[data-theme="light"] .btn-ghost { border-color: #ddd; color: #555; }
+[data-theme="light"] .btn-ghost:hover { border-color: #7c5cff; color: #0a0a0a; }
+[data-theme="light"] .feature-card { background: #fff; border-color: #e8e6e0; }
+[data-theme="light"] .feature-card:hover { background: #fff; border-color: #7c5cff; box-shadow: 0 20px 40px rgba(0,0,0,0.06); }
+[data-theme="light"] .testimonial-card { background: #fff; border-color: #e8e6e0; }
+[data-theme="light"] .demo-window { background: #f5f5f5; border-color: #ddd; box-shadow: 0 25px 80px rgba(0,0,0,0.1); }
+[data-theme="light"] .demo-header { background: #e8e8e8; border-bottom: 1px solid #ddd; }
+[data-theme="light"] .demo-body { color: #333; }
+[data-theme="light"] .demo-line.user { color: #7c5cff; }
+[data-theme="light"] .demo-line.ai { color: #3aa0ff; }
+[data-theme="light"] .demo-line.system { color: #22c55e; }
+[data-theme="light"] .demo-line.muted { color: #888; }
+[data-theme="light"] .demo-title { color: #999; }
+[data-theme="light"] h1, [data-theme="light"] h2, [data-theme="light"] h3 { color: #0a0a0a; }
+[data-theme="light"] p, [data-theme="light"] span { color: inherit; }
+[data-theme="light"] .text-gray-400 { color: #6b6b6b; }
+[data-theme="light"] .text-gray-500 { color: #888; }
+[data-theme="light"] footer { border-color: #e8e6e0; }
+[data-theme="light"] section { border-color: #e8e6e0; }
+[data-theme="light"] .btn-primary { background: linear-gradient(135deg, #7c5cff, #3aa0ff); }
+[data-theme="light"] a.bg-white { background: #0a0a0a; color: #fff; }
     </style>
 </head>
 <body>
@@ -160,7 +191,7 @@
     <!-- NAV -->
     <nav class="nav-blur sticky top-0 z-50">
         <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-            <a href="/" class="flex items-center gap-2.5 text-white font-bold text-lg">
+            <a href="/" class="flex items-center gap-2.5 text font-bold text-lg">
                 <span style="width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,#7c5cff,#3aa0ff);display:inline-block;box-shadow:0 4px 12px rgba(124,92,255,0.3);"></span>
                 NuruXplore
             </a>
@@ -170,10 +201,23 @@
                 <a href="#testimonials" class="hover:text-white transition">Testimonials</a>
                 <a href="/pricing" class="hover:text-white transition">Pricing</a>
             </div>
-            <div class="flex items-center gap-3">
-                <a href="/login" class="text-sm text-gray-400 hover:text-white transition">Log in</a>
-                <a href="/register" class="text-sm px-5 py-2.5 bg-white text-black rounded-full font-semibold hover:bg-gray-200 transition">Sign up free</a>
-            </div>
+                <div class="flex items-center gap-3">
+                    @auth
+                        <a href="/dashboard" class="text-sm text-gray-400 hover:text-white transition">Dashboard</a>
+                        <span class="text-sm text-gray-500">|</span>
+                        <form method="POST" action="/api/auth/logout" class="inline" id="logoutForm">
+                            @csrf
+                            <a href="#" onclick="document.getElementById('logoutForm').submit(); return false;" class="text-sm text-gray-400 hover:text-white transition">Log out</a>
+                        </form>
+                    @else
+                        <a href="/login" class="text-sm text-gray-400 hover:text-white transition">Log in</a>
+                        <a href="/register" class="text-sm px-5 py-2.5 bg-white text-black rounded-full font-semibold hover:bg-gray-200 transition">Sign up free</a>
+                    @endauth
+
+                <button onclick="toggleTheme()" class="text-sm text-gray-400 hover:text-white transition px-2 py-1 rounded-lg border border-white/10 hover:border-white/30" title="Toggle theme">
+                    <span id="themeIcon">☀️</span>
+                </button>
+                </div>
         </div>
     </nav>
 
@@ -443,6 +487,24 @@
             
             cumulativeDelay += line.delay;
         });
+
+
+
+            function toggleTheme() {
+        const html = document.documentElement;
+        const current = html.getAttribute('data-theme');
+        const next = current === 'dark' ? 'light' : 'dark';
+        html.setAttribute('data-theme', next);
+        document.getElementById('themeIcon').textContent = next === 'dark' ? '☀️' : '🌙';
+        localStorage.setItem('nuruxplore_landing_theme', next);
+    }
+
+    // Load saved theme
+    (function() {
+        const saved = localStorage.getItem('nuruxplore_landing_theme') || 'dark';
+        document.documentElement.setAttribute('data-theme', saved);
+        document.getElementById('themeIcon').textContent = saved === 'dark' ? '☀️' : '🌙';
+    })();
     </script>
 
 </body>
