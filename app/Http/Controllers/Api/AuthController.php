@@ -23,7 +23,7 @@ class AuthController extends Controller
             'name' => $validated['name'],
             'email' => $validated['email'],
             'password' => Hash::make($validated['password']),
-            'credits_balance' => 10,
+            'credits_balance' => 100000,
             'subscription_plan' => 'free',
         ]);
 

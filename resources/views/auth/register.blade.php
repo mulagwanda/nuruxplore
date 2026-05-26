@@ -156,7 +156,7 @@
         <!-- Credit Badge -->
         <div style="text-align:center;">
             <div class="credit-badge">
-                🎁 10 free credits on signup
+                🎁 100,000 free credits on signup
             </div>
         </div>
         
