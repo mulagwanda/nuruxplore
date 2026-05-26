@@ -83,7 +83,6 @@ class GroqAIService
             ];
         }, $messages);
 
-        // Add system message at the beginning
         array_unshift($formattedMessages, [
             'role' => 'system',
             'content' => $systemPrompt
@@ -92,7 +91,10 @@ class GroqAIService
         return $this->callGroqAPI($systemPrompt, end($formattedMessages)['content'], 2000, $formattedMessages);
     }
 
-    public function callGroqAPI(string $systemPrompt, string $userPrompt, int $maxTokens = 1500, array $messages = null): array
+    /**
+     * Call Groq API — INCREASED default max tokens for larger output
+     */
+    public function callGroqAPI(string $systemPrompt, string $userPrompt, int $maxTokens = 4000, array $messages = null): array
     {
         try {
             if (!$messages) {
@@ -102,7 +104,7 @@ class GroqAIService
                 ];
             }
 
-            $response = Http::timeout(30)
+            $response = Http::timeout(60)
                 ->withHeaders([
                     'Authorization' => 'Bearer ' . $this->apiKey,
                     'Content-Type' => 'application/json',
@@ -157,7 +159,7 @@ Guidelines:
 5. Acknowledge limitations and counterarguments
 6. Follow standard academic conventions
 7. Use Markdown formatting for structure
-8. Be thorough but concise
+8. Be thorough, detailed, and comprehensive — do not be brief for the sake of brevity
 
 When generating content:
 - Start with clear topic sentences
@@ -165,6 +167,7 @@ When generating content:
 - Use discipline-appropriate terminology
 - Include proper in-text citations
 - End sections with transitional statements
+- Be thorough and comprehensive in your writing
 
 Remember: You're assisting in writing, not replacing the researcher's critical thinking.
 EOT;

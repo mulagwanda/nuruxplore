@@ -33,31 +33,32 @@ class NuruAIService
         $steps[0]['status'] = 'completed';
         $steps[0]['message'] = '✅ ' . $smartTitle;
 
-        // Step 2: Generate complete document — ENHANCED for larger output
+        // Step 2: Generate complete document with MAXIMUM detail
         $steps[] = ['step' => 'document', 'status' => 'processing', 'message' => '📝 Writing comprehensive thesis...'];
         
-        $systemPrompt = "You are an academic thesis writer. Generate a COMPREHENSIVE, DETAILED thesis in Markdown format.\n\n";
-        $systemPrompt .= "REQUIREMENTS:\n";
+        $systemPrompt = "You are an academic thesis writer. Generate a COMPREHENSIVE, DETAILED, SUBSTANTIVE thesis in Markdown format.\n\n";
+        $systemPrompt .= "CRITICAL REQUIREMENTS:\n";
         $systemPrompt .= "- Use ## for ALL section headings\n";
         $systemPrompt .= "- Sections: Abstract, Introduction, Literature Review, Methodology, Results, Discussion, Conclusion, References\n";
-        $systemPrompt .= "- Each section MUST be THOROUGH and SUBSTANTIVE — not surface-level\n";
+        $systemPrompt .= "- Each section MUST be THOROUGH, DETAILED, and SUBSTANTIVE — NOT surface-level or brief\n";
         $systemPrompt .= "- Introduction: 800-1200 words with background, problem statement, objectives, research questions, significance\n";
         $systemPrompt .= "- Literature Review: 1000-1500 words with theoretical framework, empirical review, research gaps, conceptual framework\n";
         $systemPrompt .= "- Methodology: 600-900 words with design, population, sampling, data collection, analysis, ethics\n";
-        $systemPrompt .= "- Results: 500-800 words with findings and analysis\n";
+        $systemPrompt .= "- Results: 500-800 words with findings and detailed analysis\n";
         $systemPrompt .= "- Discussion: 600-900 words with interpretation, comparison, implications, limitations\n";
         $systemPrompt .= "- Conclusion: 400-600 words with summary, recommendations, future research\n";
         $systemPrompt .= "- Use inline citations [Author, Year] throughout ALL sections\n";
         $systemPrompt .= "- Include a COMPLETE References section at the end with full citations\n";
         $systemPrompt .= "- Citation style: {$project->citation_style}\n";
-        $systemPrompt .= "- TOTAL: 5000-7000 words\n";
+        $systemPrompt .= "- TOTAL TARGET: 5000-7000 words — DO NOT stop early\n";
         $systemPrompt .= "- Academic tone, formal language, well-structured paragraphs\n";
-        $systemPrompt .= "- Make EVERY section substantive with detailed analysis";
+        $systemPrompt .= "- Make EVERY section substantive with detailed analysis, examples, and evidence\n";
+        $systemPrompt .= "- DO NOT summarize or condense — this is the FULL thesis, not an abstract";
         
         $result = $this->groq->callGroqAPI(
             $systemPrompt,
-            "Write a COMPREHENSIVE {$project->type} titled: {$smartTitle}\n\nMake it detailed and thorough. Each section should be substantial. Aim for 5000-7000 words total.",
-            8000
+            "Write a COMPREHENSIVE, FULL-LENGTH {$project->type} titled: {$smartTitle}\n\nMake it as detailed and thorough as possible. Each section must be substantive. Target 5000-7000 words total. Do NOT be brief.",
+            12000
         );
         
         $document = $result['content'] ?? '';
@@ -96,14 +97,10 @@ class NuruAIService
         $currentDocument = $project->content ?? '';
         $msg = strtolower(trim($userMessage));
         
-        // ==========================================
-        // LEVEL 1: ULTRA-STRONG CHAT SIGNALS
-        // ==========================================
-        
         $isChat = false;
         $isEdit = false;
         
-        // Message starts with question word = ALWAYS chat
+        // LEVEL 1: Question starters = ALWAYS chat
         $questionStarters = [
             'what ', 'how ', 'why ', 'when ', 'where ', 'who ',
             'which ', 'whose ', 'can you ', 'could you ', 'would you ',
@@ -119,16 +116,12 @@ class NuruAIService
             }
         }
         
-        // Question mark = always chat
         if (str_contains($msg, '?')) {
             $isChat = true;
             $isEdit = false;
         }
         
-        // ==========================================
-        // LEVEL 2: STRONG CHAT PATTERNS
-        // ==========================================
-        
+        // LEVEL 2: Strong chat patterns
         if (!$isEdit) {
             $strongChatPatterns = [
                 'what is', 'what are', 'what does', 'what do',
@@ -166,10 +159,7 @@ class NuruAIService
             }
         }
         
-        // ==========================================
-        // LEVEL 3: SECTION + ACTION = EDIT
-        // ==========================================
-        
+        // LEVEL 3: Section + Action = Edit
         $sectionNames = [
             'abstract', 'introduction', 'literature review', 'lit review',
             'methodology', 'methods', 'results', 'findings',
@@ -191,28 +181,19 @@ class NuruAIService
         
         $mentionsSection = false;
         foreach ($sectionNames as $section) {
-            if (str_contains($msg, $section)) {
-                $mentionsSection = true;
-                break;
-            }
+            if (str_contains($msg, $section)) { $mentionsSection = true; break; }
         }
         
         $hasAction = false;
         foreach ($actionWords as $action) {
-            if (str_contains($msg, $action)) {
-                $hasAction = true;
-                break;
-            }
+            if (str_contains($msg, $action)) { $hasAction = true; break; }
         }
         
         if ($mentionsSection && $hasAction && !$isChat) {
             $isEdit = true;
         }
         
-        // ==========================================
-        // LEVEL 4: STANDALONE EDIT SIGNALS
-        // ==========================================
-        
+        // LEVEL 4: Standalone edit patterns
         if (!$isChat && !$isEdit) {
             $editPatterns = [
                 'add a table', 'add table', 'add a paragraph', 'add paragraph',
@@ -226,43 +207,29 @@ class NuruAIService
                 'better structure', 'clearer', 'more clear',
                 'reformat', 'move the', 'reorder',
             ];
-            
             foreach ($editPatterns as $pattern) {
-                if (str_contains($msg, $pattern)) {
-                    $isEdit = true;
-                    break;
-                }
+                if (str_contains($msg, $pattern)) { $isEdit = true; break; }
             }
         }
         
-        // ==========================================
-        // LEVEL 5: EMPTY DOCUMENT = GENERATE
-        // ==========================================
-        
+        // LEVEL 5: Empty document = generate
         if (empty($currentDocument)) {
             $isEdit = true;
             $isChat = false;
         }
         
-        // ==========================================
-        // LEVEL 6: AI FALLBACK
-        // ==========================================
-        
+        // LEVEL 6: AI fallback
         if (!$isChat && !$isEdit) {
             $intentResult = $this->groq->callGroqAPI(
                 "Message: \"{$userMessage}\"\nDoes this MODIFY/EDIT a thesis, or is it a general QUESTION? Reply ONE word: 'edit' or 'chat'.",
-                "",
-                20
+                "", 20
             );
             $aiIntent = strtolower(trim($intentResult['content'] ?? 'chat'));
             $isEdit = str_contains($aiIntent, 'edit');
             $isChat = !$isEdit;
         }
         
-        // ==========================================
         // EXECUTE
-        // ==========================================
-        
         if ($isChat && !$isEdit) {
             return $this->handleChat($project, $userMessage);
         }
@@ -293,11 +260,10 @@ class NuruAIService
     }
 
     /**
-     * Handle document edit — ENHANCED to preserve detail
+     * Handle document edit
      */
     protected function handleEdit(NuruxploreProject $project, string $userMessage, string $currentDocument): array
     {
-        // Get recent chat history for context
         $recentMessages = $project->messages()
             ->orderBy('created_at', 'desc')
             ->limit(6)
@@ -312,7 +278,7 @@ class NuruAIService
         $systemPrompt .= "1. Keep ALL unchanged sections EXACTLY as they are — do NOT summarize or shorten them\n";
         $systemPrompt .= "2. Only modify what the user explicitly asked for\n";
         $systemPrompt .= "3. Maintain the SAME level of detail and word count for unchanged sections\n";
-        $systemPrompt .= "4. When adding content, be THOROUGH and SUBSTANTIVE — not brief\n";
+        $systemPrompt .= "4. When adding content, be THOROUGH and SUBSTANTIVE\n";
         $systemPrompt .= "5. Use inline citations [Author, Year]\n";
         $systemPrompt .= "6. Maintain {$project->citation_style} format\n";
         $systemPrompt .= "7. Sections: Abstract, Introduction, Literature Review, Methodology, Results, Discussion, Conclusion, References\n";
@@ -323,7 +289,7 @@ class NuruAIService
         $userPrompt .= "USER INSTRUCTION: {$userMessage}\n\n";
         $userPrompt .= "Return the COMPLETE revised thesis. Keep unchanged sections exactly as-is with their full detail.";
         
-        $result = $this->groq->callGroqAPI($systemPrompt, $userPrompt, 8000);
+        $result = $this->groq->callGroqAPI($systemPrompt, $userPrompt, 12000);
         
         $newDocument = $result['content'] ?? $currentDocument;
         
