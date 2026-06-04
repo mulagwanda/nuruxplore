@@ -72,19 +72,25 @@ class AuthController extends Controller
     }
 
     public function logout(Request $request)
-    {
-        // Revoke API token
+{
+    // Revoke API token if it exists
+    if ($request->user() && $request->user()->currentAccessToken()) {
         $request->user()->currentAccessToken()->delete();
-        
-        // Logout from web session
+    }
+    
+    // Logout from web session
+    if (Auth::guard('web')->check()) {
         Auth::guard('web')->logout();
-        
-        // Invalidate session
+    }
+    
+    // Invalidate session
+    if ($request->hasSession()) {
         $request->session()->invalidate();
         $request->session()->regenerateToken();
-
-        return response()->json(['message' => 'Logged out successfully']);
     }
+
+    return response()->json(['message' => 'Logged out successfully']);
+}
 
     public function user(Request $request)
     {

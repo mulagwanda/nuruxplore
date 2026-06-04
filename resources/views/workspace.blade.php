@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,500;9..144,700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{{ asset('css/nuru-workspace.css') }}?v={{ filemtime(public_path('css/nuru-workspace.css')) }}">
+    <link rel="stylesheet" href="{{ asset('css/nuru-workspace.css') }}">
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <style>
@@ -27,14 +27,11 @@
         @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes bounce { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-5px)} }
         
-        /* Mobile chat overlay */
         @media (max-width: 768px) {
             .ws-chat.mobile-open {
                 display: flex !important;
-                position: fixed;
-                top: 48px; left: 0; right: 0; bottom: 0;
-                z-index: 80;
-                border-right: none;
+                position: fixed; top: 48px; left: 0; right: 0; bottom: 0;
+                z-index: 80; border-right: none;
                 box-shadow: 0 0 40px rgba(0,0,0,0.2);
             }
         }
@@ -71,8 +68,8 @@
                 <template x-if="messages.length === 0 && !isLoading">
                     <div style="text-align:center;padding:40px 16px;color:var(--ws-text-secondary);">
                         <div style="font-size:32px;margin-bottom:8px;">📝</div>
-                        <p style="font-weight:600;font-size:13px;">Start your thesis</p>
-                        <p style="font-size:11px;">Ask AI to modify your thesis or answer research questions.</p>
+                        <p style="font-weight:600;font-size:13px;">Start your <span x-text="documentLabel"></span></p>
+                        <p style="font-size:11px;">Ask AI to modify your document or answer research questions.</p>
                     </div>
                 </template>
                 <template x-for="msg in messages" :key="msg.id || Math.random()">
@@ -81,7 +78,7 @@
                         <div class="chat-content">
                             <div class="role-label" :class="msg.role" x-text="msg.role === 'user' ? 'You' : 'NuruXplore AI'"></div>
                             <div x-show="msg.isAction" class="action-msg" x-text="msg.content"></div>
-                            <div x-show="!msg.isAction" class="text chat-formatted" x-html="renderChatMarkdown(msg.content)"></div>
+                            <div x-show="!msg.isAction" class="text" x-html="renderChatMarkdown(msg.content)"></div>
                         </div>
                     </div>
                 </template>
@@ -99,7 +96,7 @@
             </div>
             <div class="ws-chat-input-area">
                 <div class="ws-chat-input-box">
-                    <textarea x-model="inputMessage" @keydown.enter.prevent="!$event.shiftKey && sendMessage()" placeholder="Modify your thesis or ask a question..." rows="2"></textarea>
+                    <textarea x-model="inputMessage" @keydown.enter.prevent="!$event.shiftKey && sendMessage()" placeholder="Modify your document or ask a question..." rows="2"></textarea>
                     <div class="ws-chat-input-row">
                         <button class="ws-send-btn" @click="sendMessage()" :disabled="!inputMessage.trim() || isLoading">↑</button>
                     </div>
@@ -109,16 +106,17 @@
 
         <!-- PREVIEW PANEL -->
         <section class="ws-preview">
-<!-- Replace with this -->
-<div class="ws-preview-toolbar" style="display:flex;align-items:center;justify-content:space-between;padding:0 14px;">
-    <div style="display:flex;align-items:center;gap:8px;">
-        <span style="font-size:12px;font-weight:600;color:var(--ws-text);">📄 Thesis Document</span>
-        <span style="font-size:10px;color:var(--ws-text-secondary);background:var(--ws-hover);padding:2px 8px;border-radius:999px;" x-text="wordCount + ' words'"></span>
-    </div>
-    <button class="ws-btn" @click="exportPDF()" style="display:flex;align-items:center;gap:4px;font-weight:500;">
-        <span>📥</span> Export PDF
-    </button>
-</div>
+            <div class="ws-preview-toolbar" style="display:flex;align-items:center;justify-content:space-between;padding:0 14px;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span style="font-size:12px;font-weight:600;color:var(--ws-text);">
+                        📄 <span x-text="documentLabel">Document</span>
+                    </span>
+                    <span style="font-size:10px;color:var(--ws-text-secondary);background:var(--ws-hover);padding:2px 8px;border-radius:999px;" x-text="wordCount + ' words'"></span>
+                </div>
+                <button class="ws-btn" @click="exportPDF()" style="display:flex;align-items:center;gap:4px;font-weight:500;">
+                    <span>📥</span> Export PDF
+                </button>
+            </div>
             <div class="ws-preview-body">
                 <div x-show="isPreviewLoading" style="position:absolute;inset:0;background:var(--ws-surface);z-index:10;display:flex;align-items:center;justify-content:center;border-radius:8px;">
                     <div style="text-align:center;">
@@ -127,12 +125,12 @@
                             <span style="width:7px;height:7px;background:#ccc;border-radius:50%;animation:bounce 1s infinite 0.2s;"></span>
                             <span style="width:7px;height:7px;background:#ccc;border-radius:50%;animation:bounce 1s infinite 0.4s;"></span>
                         </div>
-                        <p style="color:var(--ws-text-secondary);font-size:12px;">Updating thesis...</p>
+                        <p style="color:var(--ws-text-secondary);font-size:12px;">Updating document...</p>
                     </div>
                 </div>
                 <div class="ws-preview-frame">
-                    <div x-show="isPageLoading" style="text-align:center;padding:60px;color:var(--ws-text-secondary);">Loading thesis...</div>
-                    <div x-show="!isPageLoading" class="ws-doc" x-html="renderMarkdown('# ' + projectTitle + '\n\n' + (projectContent || '*No content yet. Start a conversation to generate your thesis.*'))"></div>
+                    <div x-show="isPageLoading" style="text-align:center;padding:60px;color:var(--ws-text-secondary);">Loading...</div>
+                    <div x-show="!isPageLoading" class="ws-doc" x-html="renderMarkdown('# ' + projectTitle + '\n\n' + (projectContent || '*No content yet. Start a conversation to generate your document.*'))"></div>
                 </div>
             </div>
         </section>
@@ -147,12 +145,27 @@
     <script>
         function workspaceApp() {
             return {
-                projectUUID: '', projectTitle: '', citationStyle: 'APA 7',
-                wordCount: 0, credits: 0, projectContent: '',
-                messages: [], inputMessage: '',
-                isLoading: false, isPageLoading: true, isPreviewLoading: false,
-                chatOpen: false, isMobile: window.innerWidth <= 768,
+                projectUUID: '',
+                projectTitle: '',
+                projectType: 'thesis',
+                citationStyle: 'APA 7',
+                wordCount: 0,
+                credits: 0,
+                projectContent: '',
+                messages: [],
+                inputMessage: '',
+                isLoading: false,
+                isPageLoading: true,
+                isPreviewLoading: false,
+                chatOpen: false,
+                isMobile: window.innerWidth <= 768,
                 darkMode: localStorage.getItem('nuruxplore_theme') === 'dark',
+
+                get documentLabel() {
+                    if (this.projectType === 'proposal') return 'Research Proposal';
+                    if (this.projectType === 'chat') return 'Chat';
+                    return 'Thesis Document';
+                },
 
                 async init() {
                     this.projectUUID = window.location.pathname.split('/').pop();
@@ -177,6 +190,7 @@
                             window.NuruAPI.getCredits(),
                         ]);
                         this.projectTitle = pr.project?.title || '';
+                        this.projectType = pr.project?.type || 'thesis';
                         this.citationStyle = pr.project?.citation_style || 'APA 7';
                         this.wordCount = pr.project?.word_count || 0;
                         this.projectContent = pr.project?.content || '';
@@ -186,86 +200,90 @@
                         const serverMessages = msgRes.messages || [];
                         if (serverMessages.length > 0) {
                             this.messages = serverMessages.map(msg => ({
-                                id: msg.id, role: msg.role, content: msg.content,
+                                id: msg.id,
+                                role: msg.role,
+                                content: msg.content,
                                 isAction: msg.role === 'assistant' && (msg.content.includes('✅') || msg.content.includes('📄')),
                                 isDocument: false,
                             }));
                         } else if (this.projectContent) {
-                            this.messages = [{ id: 'init', role: 'ai', content: '📄 Thesis document ready (' + this.wordCount + ' words)', isAction: true }];
+                            this.messages = [{
+                                id: 'init',
+                                role: 'ai',
+                                content: '📄 ' + this.documentLabel + ' ready (' + this.wordCount + ' words)',
+                                isAction: true
+                            }];
                         }
                     } catch (e) { console.error('Load error:', e); }
                 },
 
                 async sendMessage() {
-    if (!this.inputMessage.trim() || this.isLoading) return;
-    const msg = this.inputMessage; this.inputMessage = ''; this.isLoading = true;
-    
-    this.messages.push({ id: Date.now(), role: 'user', content: msg });
-    this.scrollChat();
+                    if (!this.inputMessage.trim() || this.isLoading) return;
+                    const msg = this.inputMessage; this.inputMessage = ''; this.isLoading = true;
+                    
+                    this.messages.push({ id: Date.now(), role: 'user', content: msg });
+                    this.scrollChat();
 
-    try {
-        this.isPreviewLoading = true;
-        const data = await window.NuruAPI.sendMessage(this.projectUUID, msg, 'chat');
-        
-        if (data.action === 'edit') {
-            // Document modified - force reload project data
-            this.messages.push({ 
-                id: Date.now(), 
-                role: 'ai', 
-                content: '✅ ' + (data.message || 'Thesis updated.'), 
-                isAction: true 
-            });
-            
-            // IMPORTANT: Reload project directly from API
-            await this.reloadProject();
-            this.isPreviewLoading = false;
-        } else {
-            // Chat question
-            this.messages.push({ 
-                id: Date.now(), 
-                role: 'ai', 
-                content: data.message || 'Done!' 
-            });
-            this.isPreviewLoading = false;
-        }
-        
-        this.credits = data.credits_remaining;
-    } catch (e) {
-        this.messages.push({ id: Date.now(), role: 'ai', content: '❌ Error: ' + e.message });
-        this.isPreviewLoading = false;
-    }
-    
-    this.isLoading = false;
-    this.scrollChat();
-},
+                    try {
+                        this.isPreviewLoading = true;
+                        const data = await window.NuruAPI.sendMessage(this.projectUUID, msg, 'chat');
+                        
+                        if (data.action === 'edit') {
+                            this.messages.push({ 
+                                id: Date.now(), 
+                                role: 'ai', 
+                                content: '✅ ' + (data.message || 'Document updated.'), 
+                                isAction: true 
+                            });
+                            await this.reloadProject();
+                            this.isPreviewLoading = false;
+                        } else {
+                            this.messages.push({ 
+                                id: Date.now(), 
+                                role: 'ai', 
+                                content: data.message || 'Done!' 
+                            });
+                            this.isPreviewLoading = false;
+                        }
+                        
+                        this.credits = data.credits_remaining;
+                    } catch (e) {
+                        this.messages.push({ id: Date.now(), role: 'ai', content: '❌ Error: ' + e.message });
+                        this.isPreviewLoading = false;
+                    }
+                    
+                    this.isLoading = false;
+                    this.scrollChat();
+                },
 
-// New method: Force reload project from API
-async reloadProject() {
-    try {
-        const pr = await window.NuruAPI.getProject(this.projectUUID);
-        if (pr.project) {
-            this.projectTitle = pr.project.title || '';
-            this.wordCount = pr.project.word_count || 0;
-            this.projectContent = pr.project.content || '';
-            document.title = this.projectTitle + ' · NuruXplore';
-        }
-    } catch (e) {
-        console.error('Reload error:', e);
-    }
-},
-// Format chat messages (not full markdown - just bold, lists, etc)
-renderChatMarkdown(c) {
-    if (!c) return '';
-    // Convert markdown-style formatting
-    let html = c
-        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-        .replace(/\*(.+?)\*/g, '<em>$1</em>')
-        .replace(/`(.+?)`/g, '<code>$1</code>')
-        .replace(/\n/g, '<br>');
-    return html;
-},
+                async reloadProject() {
+                    try {
+                        const pr = await window.NuruAPI.getProject(this.projectUUID);
+                        if (pr.project) {
+                            this.projectTitle = pr.project.title || '';
+                            this.projectType = pr.project.type || 'thesis';
+                            this.wordCount = pr.project.word_count || 0;
+                            this.projectContent = pr.project.content || '';
+                            document.title = this.projectTitle + ' · NuruXplore';
+                        }
+                    } catch (e) { console.error('Reload error:', e); }
+                },
+
+                renderChatMarkdown(c) {
+                    if (!c) return '';
+                    let html = c
+                        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+                        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+                        .replace(/`(.+?)`/g, '<code>$1</code>')
+                        .replace(/\n/g, '<br>');
+                    return html;
+                },
+
                 async exportPDF() {
-                    try { const d = await window.NuruAPI.exportPDF(this.projectUUID); if (d.download_url) window.open(d.download_url, '_blank'); } catch (e) {}
+                    try { 
+                        const d = await window.NuruAPI.exportPDF(this.projectUUID); 
+                        if (d.download_url) window.open(d.download_url, '_blank'); 
+                    } catch (e) {}
                 },
 
                 toggleDarkMode() {
@@ -274,8 +292,17 @@ renderChatMarkdown(c) {
                     document.documentElement.setAttribute('data-theme', this.darkMode ? 'dark' : 'light');
                 },
 
-                renderMarkdown(c) { if (!c) return ''; return typeof marked !== 'undefined' ? marked.parse(c) : c; },
-                scrollChat() { this.$nextTick(() => { const el = this.$refs.chatBody; if (el) el.scrollTop = el.scrollHeight; }); },
+                renderMarkdown(c) { 
+                    if (!c) return ''; 
+                    return typeof marked !== 'undefined' ? marked.parse(c) : c; 
+                },
+                
+                scrollChat() { 
+                    this.$nextTick(() => { 
+                        const el = this.$refs.chatBody; 
+                        if (el) el.scrollTop = el.scrollHeight; 
+                    }); 
+                },
             };
         }
     </script>

@@ -4,31 +4,25 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sign Up — NuruXplore | AI Academic Writing Assistant</title>
-    <meta name="description" content="Create your free NuruXplore account and start writing your thesis with AI. Get 10 free credits on signup.">
+    <meta name="description" content="Create your free NuruXplore account and start writing your thesis with AI. Get free credits on signup.">
     
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     
-    <script src="https://cdn.tailwindcss.com"></script>
     <style>
+        * { box-sizing: border-box; }
+        
         body {
-    font-family: 'Inter', sans-serif;
-    min-height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: #0a0a0a;
-    padding: 40px 20px;
-    position: relative;
-    overflow-x: hidden;
-    overflow-y: auto;
-}
+            font-family: 'Inter', sans-serif;
+            min-height: 100vh;
+            display: flex; align-items: center; justify-content: center;
+            background: #0a0a0a; padding: 40px 20px;
+            position: relative; overflow-x: hidden; overflow-y: auto;
+        }
         
         body::before {
-            content: '';
-            position: absolute;
-            top: -50%; left: -50%;
+            content: ''; position: absolute; top: -50%; left: -50%;
             width: 200%; height: 200%;
             background: 
                 radial-gradient(40% 40% at 30% 20%, rgba(124,92,255,0.15) 0%, transparent 50%),
@@ -38,13 +32,9 @@
         }
         
         .auth-card {
-            position: relative; z-index: 10;
-            width: 100%; max-width: 460px;
-            margin: auto;
-            background: rgba(255,255,255,0.03);
-            border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 20px; padding: 40px;
-            backdrop-filter: blur(20px);
+            position: relative; z-index: 10; width: 100%; max-width: 460px; margin: auto;
+            background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 20px; padding: 40px; backdrop-filter: blur(20px);
             box-shadow: 0 25px 60px rgba(0,0,0,0.4);
         }
         
@@ -52,75 +42,63 @@
             width: 40px; height: 40px; border-radius: 10px;
             background: linear-gradient(135deg, #7c5cff, #3aa0ff);
             display: inline-flex; align-items: center; justify-content: center;
-            font-size: 20px; color: #fff;
+            font-size: 20px; color: #fff; text-decoration: none;
             box-shadow: 0 8px 24px rgba(124,92,255,0.3);
         }
         
+        .input-group { margin-bottom: 16px; }
+        .input-label { display: block; font-size: 13px; font-weight: 500; color: #aaa; margin-bottom: 6px; }
+        
+        .input-wrapper { position: relative; }
         .input-field {
-            width: 100%; padding: 13px 16px; border-radius: 12px;
-            border: 1px solid rgba(255,255,255,0.1);
-            font-size: 14px; font-family: inherit;
-            background: rgba(255,255,255,0.03); color: #fff;
-            transition: all 0.2s ease; box-sizing: border-box;
+            width: 100%; padding: 13px 44px 13px 16px; border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.1); font-size: 14px; font-family: inherit;
+            background: rgba(255,255,255,0.03); color: #fff; transition: all 0.2s ease;
         }
-        .input-field:focus {
-            outline: none; border-color: #7c5cff;
-            box-shadow: 0 0 0 4px rgba(124,92,255,0.1);
-            background: rgba(255,255,255,0.05);
-        }
+        .input-field:focus { outline: none; border-color: #7c5cff; box-shadow: 0 0 0 4px rgba(124,92,255,0.1); background: rgba(255,255,255,0.05); }
         .input-field::placeholder { color: #555; }
         .input-field.error { border-color: #ef4444; box-shadow: 0 0 0 4px rgba(239,68,68,0.1); }
         .input-field.success { border-color: #22c55e; }
         
-        .input-label {
-            display: block; font-size: 13px; font-weight: 500;
-            color: #aaa; margin-bottom: 6px;
+        /* Show/Hide Password Toggle */
+        .toggle-password {
+            position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+            background: none; border: none; color: #666; cursor: pointer;
+            font-size: 16px; padding: 4px; line-height: 1; z-index: 5;
+            transition: color 0.15s;
         }
+        .toggle-password:hover { color: #aaa; }
         
         .btn-primary {
             width: 100%; padding: 14px;
             background: linear-gradient(135deg, #7c5cff, #3aa0ff);
             color: #fff; border: none; border-radius: 12px;
-            font-size: 15px; font-weight: 600; cursor: pointer;
-            font-family: inherit; transition: all 0.3s ease;
-            box-shadow: 0 4px 20px rgba(124,92,255,0.3);
+            font-size: 15px; font-weight: 600; cursor: pointer; font-family: inherit;
+            transition: all 0.3s ease; box-shadow: 0 4px 20px rgba(124,92,255,0.3);
             display: flex; align-items: center; justify-content: center; gap: 8px;
         }
-        .btn-primary:hover { 
-            box-shadow: 0 8px 30px rgba(124,92,255,0.5);
-            transform: translateY(-1px);
-        }
+        .btn-primary:hover { box-shadow: 0 8px 30px rgba(124,92,255,0.5); transform: translateY(-1px); }
         .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
         
         .btn-ghost {
-            width: 100%; padding: 12px; background: transparent;
-            color: #ccc; border: 1px solid rgba(255,255,255,0.12);
-            border-radius: 12px; font-size: 14px; font-weight: 500;
-            cursor: pointer; font-family: inherit; transition: all 0.2s ease;
-            display: flex; align-items: center; justify-content: center; gap: 8px;
+            width: 100%; padding: 12px; background: transparent; color: #ccc;
+            border: 1px solid rgba(255,255,255,0.12); border-radius: 12px;
+            font-size: 14px; font-weight: 500; cursor: pointer; font-family: inherit;
+            transition: all 0.2s ease; display: flex; align-items: center; justify-content: center; gap: 8px;
         }
         .btn-ghost:hover { border-color: rgba(255,255,255,0.3); color: #fff; }
         
-        .msg-box { 
-            font-size: 13px; margin-bottom: 16px; display: none;
-            padding: 12px 14px; border-radius: 10px; font-weight: 500;
-        }
+        .msg-box { font-size: 13px; margin-bottom: 16px; display: none; padding: 12px 14px; border-radius: 10px; font-weight: 500; }
         .msg-error { color: #fca5a5; background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.2); }
         .msg-success { color: #86efac; background: rgba(34,197,94,0.1); border: 1px solid rgba(34,197,94,0.2); }
         
-        .divider {
-            display: flex; align-items: center; gap: 12px;
-            color: #555; font-size: 12px;
-        }
-        .divider::before, .divider::after {
-            content: ''; flex: 1; height: 1px;
-            background: rgba(255,255,255,0.08);
-        }
+        .divider { display: flex; align-items: center; gap: 12px; color: #555; font-size: 12px; margin: 20px 0; }
+        .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: rgba(255,255,255,0.08); }
         
         .link { color: #7c5cff; text-decoration: none; font-weight: 500; transition: color 0.2s; }
         .link:hover { color: #a78bfa; }
         
-        .password-strength { height: 4px; border-radius: 2px; transition: all 0.3s ease; margin-top: 8px; }
+        .password-strength { height: 4px; border-radius: 2px; transition: all 0.3s ease; margin-top: 8px; background: #333; }
         .strength-weak { background: #ef4444; width: 25%; }
         .strength-fair { background: #f59e0b; width: 50%; }
         .strength-good { background: #3b82f6; width: 75%; }
@@ -133,13 +111,10 @@
             padding: 8px 16px; border-radius: 999px; margin-bottom: 20px;
         }
         
-        @keyframes spin { to { transform: rotate(360deg); } }
-        .spinner { animation: spin 0.8s linear infinite; }
+        .match-indicator { font-size: 11px; margin-top: 4px; display: none; }
         
-        .tooltip {
-            position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
-            cursor: help; color: #555; font-size: 14px;
-        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .spinner { animation: spin 0.8s linear infinite; display: inline-block; }
     </style>
 </head>
 <body>
@@ -148,16 +123,14 @@
         
         <!-- Brand -->
         <div style="text-align:center;margin-bottom:24px;">
-            <a href="/" class="brand-icon" style="text-decoration:none;">✦</a>
+            <a href="/" class="brand-icon">✦</a>
             <h1 style="font-size:24px;font-weight:700;color:#fff;margin:16px 0 4px;">Create your account</h1>
             <p style="color:#888;font-size:14px;margin:0;">Start writing with AI — free credits included</p>
         </div>
         
         <!-- Credit Badge -->
         <div style="text-align:center;">
-            <div class="credit-badge">
-                🎁 100,000 free credits on signup
-            </div>
+            <div class="credit-badge">🎁 100,000 free credits on signup</div>
         </div>
         
         <!-- Messages -->
@@ -167,32 +140,39 @@
         <form id="registerForm">
             
             <!-- Name -->
-            <div style="margin-bottom:16px;">
+            <div class="input-group">
                 <label class="input-label" for="name">Full Name</label>
-                <input type="text" id="name" class="input-field" placeholder="John Doe" required autocomplete="name" autofocus>
+                <div class="input-wrapper">
+                    <input type="text" id="name" class="input-field" placeholder="John Dennis" required autocomplete="name" autofocus>
+                </div>
             </div>
             
             <!-- Email -->
-            <div style="margin-bottom:16px;">
+            <div class="input-group">
                 <label class="input-label" for="email">Email address</label>
-                <input type="email" id="email" class="input-field" placeholder="you@example.com" required autocomplete="email">
+                <div class="input-wrapper">
+                    <input type="email" id="email" class="input-field" placeholder="you@example.com" required autocomplete="email">
+                </div>
             </div>
             
             <!-- Password -->
-            <div style="margin-bottom:8px;position:relative;">
+            <div class="input-group" style="margin-bottom:8px;">
                 <label class="input-label" for="password">Password</label>
-                <input type="password" id="password" class="input-field" placeholder="Min. 8 characters" required minlength="8" autocomplete="new-password">
-                <span class="tooltip" title="At least 8 characters, include numbers and symbols for strength">ⓘ</span>
+                <div class="input-wrapper">
+                    <input type="password" id="password" class="input-field" placeholder="Min. 8 characters" required minlength="8" autocomplete="new-password">
+                    <button type="button" class="toggle-password" data-target="password" title="Show password">👁</button>
+                </div>
+                <div class="password-strength" id="strengthMeter"></div>
             </div>
             
-            <!-- Password Strength Meter -->
-            <div class="password-strength" id="strengthMeter" style="background:#333;margin-bottom:16px;"></div>
-            
             <!-- Confirm Password -->
-            <div style="margin-bottom:8px;">
+            <div class="input-group" style="margin-bottom:8px;">
                 <label class="input-label" for="password_confirmation">Confirm Password</label>
-                <input type="password" id="password_confirmation" class="input-field" placeholder="Repeat your password" required autocomplete="new-password">
-                <span id="matchIndicator" style="font-size:11px;color:#555;display:none;margin-top:4px;"></span>
+                <div class="input-wrapper">
+                    <input type="password" id="password_confirmation" class="input-field" placeholder="Repeat your password" required autocomplete="new-password">
+                    <button type="button" class="toggle-password" data-target="password_confirmation" title="Show password">👁</button>
+                </div>
+                <span id="matchIndicator" class="match-indicator"></span>
             </div>
             
             <!-- Terms -->
@@ -203,18 +183,16 @@
             
             <!-- Submit -->
             <button type="submit" id="submitBtn" class="btn-primary">
-                <span id="btnText">Create Account — Get 10 Free Credits</span>
+                <span id="btnText">Create Account — Get Free Credits</span>
                 <span id="btnLoader" style="display:none;">
-                    <svg class="spinner" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                        <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
-                    </svg>
+                    <span class="spinner" style="width:18px;height:18px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;"></span>
                     Creating account...
                 </span>
             </button>
         </form>
         
         <!-- Divider -->
-        <div class="divider" style="margin:20px 0;">or sign up with</div>
+        <div class="divider">or sign up with</div>
         
         <!-- Google Signup -->
         <button class="btn-ghost" onclick="alert('Coming soon!')">
@@ -229,14 +207,32 @@
     </div>
 
     <script>
-        // Password strength checker
+        // ========================================
+        // SHOW/HIDE PASSWORD TOGGLE
+        // ========================================
+        document.querySelectorAll('.toggle-password').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const targetId = this.getAttribute('data-target');
+                const input = document.getElementById(targetId);
+                if (input.type === 'password') {
+                    input.type = 'text';
+                    this.textContent = '🙈';
+                } else {
+                    input.type = 'password';
+                    this.textContent = '👁';
+                }
+            });
+        });
+
+        // ========================================
+        // PASSWORD STRENGTH METER
+        // ========================================
         document.getElementById('password').addEventListener('input', function() {
             const password = this.value;
             const meter = document.getElementById('strengthMeter');
             
             if (!password) {
                 meter.className = 'password-strength';
-                meter.style.background = '#333';
                 return;
             }
             
@@ -254,32 +250,31 @@
             else meter.classList.add('strength-strong');
         });
 
-        // Password match indicator
+        // ========================================
+        // PASSWORD MATCH INDICATOR
+        // ========================================
         document.getElementById('password_confirmation').addEventListener('input', function() {
             const password = document.getElementById('password').value;
             const confirm = this.value;
             const indicator = document.getElementById('matchIndicator');
             
-            if (!confirm) {
-                indicator.style.display = 'none';
-                return;
-            }
+            if (!confirm) { indicator.style.display = 'none'; return; }
             
             indicator.style.display = 'block';
             if (password === confirm) {
                 indicator.textContent = '✓ Passwords match';
                 indicator.style.color = '#22c55e';
-                this.classList.add('success');
-                this.classList.remove('error');
+                this.classList.add('success'); this.classList.remove('error');
             } else {
                 indicator.textContent = '✗ Passwords do not match';
                 indicator.style.color = '#ef4444';
-                this.classList.add('error');
-                this.classList.remove('success');
+                this.classList.add('error'); this.classList.remove('success');
             }
         });
 
-        // Form submission
+        // ========================================
+        // FORM SUBMISSION
+        // ========================================
         document.getElementById('registerForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             
@@ -293,72 +288,34 @@
             const btnText = document.getElementById('btnText');
             const btnLoader = document.getElementById('btnLoader');
             
-            // Reset
-            msgBox.style.display = 'none';
-            msgBox.className = 'msg-box';
+            msgBox.style.display = 'none'; msgBox.className = 'msg-box';
             
-            // Validation
-            if (!name || name.length < 2) {
-                showError('Please enter your full name.');
-                document.getElementById('name').focus();
-                return;
-            }
-            if (!email || !email.includes('@')) {
-                showError('Please enter a valid email address.');
-                document.getElementById('email').focus();
-                return;
-            }
-            if (password.length < 8) {
-                showError('Password must be at least 8 characters.');
-                document.getElementById('password').focus();
-                return;
-            }
-            if (password !== passwordConfirmation) {
-                showError('Passwords do not match.');
-                document.getElementById('password_confirmation').focus();
-                return;
-            }
-            if (!termsCheck) {
-                showError('Please agree to the Terms of Service and Privacy Policy.');
-                return;
-            }
+            if (!name || name.length < 2) { showError('Please enter your full name.'); return; }
+            if (!email || !email.includes('@')) { showError('Please enter a valid email address.'); return; }
+            if (password.length < 8) { showError('Password must be at least 8 characters.'); return; }
+            if (password !== passwordConfirmation) { showError('Passwords do not match.'); return; }
+            if (!termsCheck) { showError('Please agree to the Terms of Service and Privacy Policy.'); return; }
             
-            // Loading state
-            btnText.style.display = 'none';
-            btnLoader.style.display = 'flex';
-            btnLoader.style.alignItems = 'center';
-            btnLoader.style.justifyContent = 'center';
-            btnLoader.style.gap = '8px';
+            btnText.style.display = 'none'; btnLoader.style.display = 'flex';
+            btnLoader.style.alignItems = 'center'; btnLoader.style.justifyContent = 'center'; btnLoader.style.gap = '8px';
             submitBtn.disabled = true;
             
             try {
                 const response = await fetch('/api/auth/register', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json',
-                    },
-                    body: JSON.stringify({ 
-                        name, email, password,
-                        password_confirmation: passwordConfirmation 
-                    }),
+                    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                    body: JSON.stringify({ name, email, password, password_confirmation: passwordConfirmation }),
                 });
                 
                 const data = await response.json();
                 
                 if (response.ok && data.token) {
                     showSuccess('✅ Account created! Redirecting to your dashboard...');
-                    
                     localStorage.setItem('nuruxplore_token', data.token);
-                    if (data.user) {
-                        localStorage.setItem('nuruxplore_user', JSON.stringify(data.user));
-                    }
-                    
-                    setTimeout(() => {
-                        window.location.href = data.redirect || '/dashboard';
-                    }, 800);
+                    if (data.user) { localStorage.setItem('nuruxplore_user', JSON.stringify(data.user)); }
+                    setTimeout(() => { window.location.href = data.redirect || '/dashboard'; }, 800);
                 } else {
-                    const errorMsg = data.message || data.error || 'Registration failed. Please try again.';
+                    const errorMsg = data.message || data.error || 'Registration failed.';
                     if (errorMsg.includes('email')) {
                         showError('This email is already registered. <a href="/login" class="link" style="color:#7c5cff;">Log in instead?</a>');
                     } else {
@@ -374,18 +331,12 @@
         
         function showError(msg) {
             const box = document.getElementById('msgBox');
-            box.innerHTML = msg;
-            box.className = 'msg-box msg-error';
-            box.style.display = 'block';
+            box.innerHTML = msg; box.className = 'msg-box msg-error'; box.style.display = 'block';
         }
-        
         function showSuccess(msg) {
             const box = document.getElementById('msgBox');
-            box.textContent = msg;
-            box.className = 'msg-box msg-success';
-            box.style.display = 'block';
+            box.textContent = msg; box.className = 'msg-box msg-success'; box.style.display = 'block';
         }
-        
         function resetButton() {
             document.getElementById('btnText').style.display = 'inline';
             document.getElementById('btnLoader').style.display = 'none';

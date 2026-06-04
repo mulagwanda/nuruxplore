@@ -36,4 +36,9 @@ Route::middleware('auth')->group(function () {
     Route::get('/workspace/{project:uuid}', function (NuruxploreProject $project) {
         return view('workspace', ['projectId' => $project->uuid]);
     })->name('workspace');
+
+    // General Chat
+    Route::get('/chat/{uuid?}', function ($uuid = null) {
+        return view('chat', ['uuid' => $uuid]);
+    })->middleware('auth')->name('chat');
 });

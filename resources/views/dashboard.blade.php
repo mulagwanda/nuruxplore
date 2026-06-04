@@ -31,17 +31,12 @@
         .page-content { animation: fadeIn 0.2s ease; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
         
-        /* Mobile hamburger */
         .mobile-hamburger {
-            display: none;
-            background: none; border: none; font-size: 22px;
+            display: none; background: none; border: none; font-size: 22px;
             cursor: pointer; color: var(--dash-text); padding: 4px 8px;
         }
-        @media (max-width: 900px) {
-            .mobile-hamburger { display: block; }
-        }
+        @media (max-width: 900px) { .mobile-hamburger { display: block; } }
         
-        /* Sidebar toggle ALWAYS visible */
         .sidebar-toggle-inline {
             width: 32px; height: 32px; border-radius: 8px;
             background: transparent; border: 1px solid var(--dash-border);
@@ -50,31 +45,64 @@
             transition: all 0.2s ease; flex-shrink: 0;
             opacity: 1 !important; visibility: visible !important;
         }
-        .sidebar-toggle-inline:hover {
-            background: var(--dash-hover); color: var(--dash-text); border-color: #7c5cff;
-        }
+        .sidebar-toggle-inline:hover { background: var(--dash-hover); color: var(--dash-text); border-color: #7c5cff; }
         
-        /* When sidebar collapsed, show toggle floating */
         .dash-shell.sidebar-collapsed .sidebar-toggle-inline {
-            position: fixed;
-            left: 8px; top: 20px;
-            z-index: 250;
-            background: var(--dash-surface);
-            border-radius: 0 8px 8px 0;
-            box-shadow: var(--dash-shadow);
-            padding: 6px;
-        }
-        .dash-shell.sidebar-collapsed .side .sidebar-toggle-inline {
-            pointer-events: all;
-            opacity: 1 !important;
+            position: fixed; left: 8px; top: 20px; z-index: 250;
+            background: var(--dash-surface); border-radius: 0 8px 8px 0;
+            box-shadow: var(--dash-shadow); padding: 6px;
         }
         
-        /* Source row */
         .source-row {
             display: flex; align-items: center; gap: 12px; padding: 14px 16px;
             background: var(--dash-surface); border: 1px solid var(--dash-border);
             border-radius: 10px; margin-bottom: 8px;
         }
+        
+        /* Mode Switcher Tabs */
+        .mode-tabs {
+            display: flex; gap: 4px; background: var(--dash-hover);
+            border-radius: 12px; padding: 4px; margin-bottom: 24px;
+        }
+        .mode-tab {
+            flex: 1; padding: 12px 20px; border-radius: 10px; border: none;
+            background: transparent; cursor: pointer; font-size: 14px; font-weight: 500;
+            color: var(--dash-text-secondary); font-family: inherit;
+            transition: all 0.2s ease; text-align: center;
+        }
+        .mode-tab.active {
+            background: var(--dash-surface); color: var(--dash-text);
+            font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .mode-tab:hover:not(.active) { color: var(--dash-text); }
+        
+        /* Research Type Selector */
+        .research-type-selector {
+            display: flex; gap: 12px; margin-bottom: 20px;
+        }
+        .research-type-card {
+            flex: 1; padding: 20px; border-radius: 14px;
+            border: 2px solid var(--dash-border); cursor: pointer;
+            text-align: center; transition: all 0.2s ease;
+            background: var(--dash-surface);
+        }
+        .research-type-card:hover { border-color: #7c5cff; }
+        .research-type-card.selected { border-color: #7c5cff; background: rgba(124,92,255,0.05); }
+        .research-type-card .icon { font-size: 36px; margin-bottom: 8px; }
+        .research-type-card h3 { font-size: 16px; margin: 0 0 4px; color: var(--dash-text); }
+        .research-type-card p { font-size: 12px; color: var(--dash-text-muted); margin: 0; }
+        
+        /* File Upload Zone */
+        .upload-zone {
+            border: 2px dashed var(--dash-border); border-radius: 14px;
+            padding: 32px; text-align: center; cursor: pointer;
+            transition: all 0.2s ease; background: var(--dash-surface);
+            margin-bottom: 16px;
+        }
+        .upload-zone:hover { border-color: #7c5cff; background: rgba(124,92,255,0.03); }
+        .upload-zone.has-file { border-color: #22c55e; border-style: solid; background: rgba(34,197,94,0.03); }
+        .upload-zone .icon { font-size: 40px; margin-bottom: 8px; }
+        .upload-zone p { color: var(--dash-text-muted); font-size: 13px; margin: 0; }
     </style>
 </head>
 <body class="dash-body" x-data="dashboardApp()" x-init="init()" :class="{ 'dark-mode': darkMode }">
@@ -101,8 +129,11 @@
                 <a class="side-link" :class="{ active: currentPage === 'home' }" href="#" @click.prevent="navigate('home')">
                     <span class="i">▦</span> Dashboard
                 </a>
+                <a class="side-link" href="/chat">
+                    <span class="i">💬</span> General Chat
+                </a>
                 <a class="side-link" :class="{ active: currentPage === 'projects' }" href="#" @click.prevent="navigate('projects')">
-                    <span class="i">◰</span> Projects <span class="badge" x-text="projects.length"></span>
+                    <span class="i">◰</span> Research Projects <span class="badge" x-text="projects.length"></span>
                 </a>
                 <a class="side-link" :class="{ active: currentPage === 'library' }" href="#" @click.prevent="navigate('library')">
                     <span class="i">☰</span> Library
@@ -155,50 +186,116 @@
                 <div style="display:flex;justify-content:center;width:100%;">
                     <section class="dash-hero" style="max-width:800px;width:100%;text-align:center;">
                         <h1><span x-text="greeting"></span><span x-text="userName.split(' ')[0]"></span> 👋</h1>
-                        <p class="sub">What are we drafting today? Describe your topic and let AI generate a complete thesis.</p>
+                        <p class="sub">What would you like to do today?</p>
                         
-                        <div class="prompt-box-wrapper" style="margin:0 auto;">
-                            <div class="prompt-box" :class="{ 'typing': isTyping }">
-                                <div class="prompt-box-inner">
-                                    <textarea x-model="newProjectTitle" x-ref="promptTextarea" @input="handleTyping()"
-                                        @keydown.enter.prevent="createProjectWithAI()"
-                                        placeholder="Describe your thesis topic… e.g. 'The impact of mobile banking on financial inclusion in rural Tanzania'"
-                                        rows="1" :style="{ height: textareaHeight + 'px' }" :disabled="isGenerating"></textarea>
+                        <!-- MODE SWITCHER -->
+                        <div class="mode-tabs">
+                            <button class="mode-tab" :class="{ active: activeMode === 'general' }" @click="activeMode = 'general'">
+                                💬 General Chat
+                            </button>
+                            <button class="mode-tab" :class="{ active: activeMode === 'research' }" @click="activeMode = 'research'">
+                                🔬 Research Expert
+                            </button>
+                        </div>
+                        
+                        <!-- ============================ -->
+                        <!-- GENERAL CHAT MODE          -->
+                        <!-- ============================ -->
+                        <div x-show="activeMode === 'general'">
+                            <div style="background:var(--dash-surface);border:1px solid var(--dash-border);border-radius:16px;padding:32px;text-align:center;">
+                                <div style="font-size:48px;margin-bottom:12px;">💬</div>
+                                <h3 style="color:var(--dash-text);margin:0 0 8px;">General Academic Chat</h3>
+                                <p style="color:var(--dash-text-muted);margin:0 0 20px;font-size:14px;">
+                                    ChatGPT-style assistant for any academic topic.<br>
+                                    Ask questions, get explanations, discuss research ideas.
+                                </p>
+                                <a href="/chat" class="nuru-btn nuru-btn-grad" style="justify-content:center;padding:12px 24px;text-decoration:none;display:inline-flex;">
+                                    Open General Chat →
+                                </a>
+                            </div>
+                        </div>
+                        
+                        <!-- ============================ -->
+                        <!-- RESEARCH EXPERT MODE       -->
+                        <!-- ============================ -->
+                        <div x-show="activeMode === 'research'">
+                            
+                            <!-- Research Type Selector -->
+                            <div class="research-type-selector">
+                                <div class="research-type-card" :class="{ selected: researchType === 'proposal' }" @click="researchType = 'proposal'">
+                                    <div class="icon">📋</div>
+                                    <h3>Research Proposal</h3>
+                                    <p>Generate a 1,500-2,500 word proposal</p>
                                 </div>
-                                <div class="prompt-bar">
-                                    <div class="right" style="margin-left:auto;">
-                                        <span style="font-size:11px;color:var(--dash-text-muted);margin-right:8px;">25 credits</span>
-                                        <span style="font-size:12px;color:var(--dash-text-secondary);margin-right:8px;">Thesis · APA 7</span>
-                                        <button class="submit-arrow" @click="createProjectWithAI()" :disabled="!newProjectTitle.trim() || isGenerating">
-                                            <span x-show="!isGenerating">↑</span>
-                                            <span x-show="isGenerating" style="font-size:12px;">⏳</span>
-                                        </button>
+                                <div class="research-type-card" :class="{ selected: researchType === 'thesis' }" @click="researchType = 'thesis'">
+                                    <div class="icon">📄</div>
+                                    <h3>Full Thesis</h3>
+                                    <p>Generate a 5,000+ word thesis</p>
+                                </div>
+                            </div>
+                            
+                            <!-- Topic Input -->
+                            <div class="prompt-box-wrapper" style="margin:0 auto;">
+                                <div class="prompt-box" :class="{ 'typing': isTyping }">
+                                    <div class="prompt-box-inner">
+                                        <textarea x-model="newProjectTitle" x-ref="promptTextarea" @input="handleTyping()"
+                                            @keydown.enter.prevent="createProjectWithAI()"
+                                            :placeholder="researchType === 'proposal' ? 'Describe your research proposal topic…' : 'Describe your thesis topic… e.g. The impact of mobile banking on financial inclusion in rural Tanzania'"
+                                            rows="2" :style="{ height: textareaHeight + 'px' }" :disabled="isGenerating"></textarea>
                                     </div>
                                 </div>
                             </div>
-                        </div>
-
-                        <!-- Generation Progress -->
-                        <div x-show="isGenerating" style="margin-top:24px;background:var(--dash-surface);border:1px solid var(--dash-border);border-radius:14px;padding:20px;text-align:left;max-width:600px;margin-left:auto;margin-right:auto;">
-                            <div style="font-weight:600;margin-bottom:12px;color:var(--dash-text);">🚀 Generating your thesis...</div>
-                            <template x-for="step in generationSteps" :key="step.step">
-                                <div style="display:flex;align-items:center;gap:10px;padding:8px 0;font-size:14px;color:var(--dash-text-secondary);">
-                                    <span x-show="step.status === 'processing'" style="animation:nuru-spin 1s linear infinite;">⏳</span>
-                                    <span x-show="step.status === 'completed'">✅</span>
-                                    <span x-text="step.message"></span>
+                            
+                            <!-- File Upload (only for Thesis) -->
+                            <div x-show="researchType === 'thesis'" style="margin-top:16px;">
+                                <div class="upload-zone" 
+                                     :class="{ 'has-file': uploadedFile }"
+                                     @click="document.getElementById('fileUpload').click()"
+                                     @dragover.prevent @drop.prevent="handleDrop($event)">
+                                    <div class="icon" x-text="uploadedFile ? '✅' : '📁'"></div>
+                                    <p x-show="!uploadedFile">Upload your research proposal or collected data (PDF)</p>
+                                    <p x-show="uploadedFile" style="color:#22c55e;">
+                                        <strong x-text="uploadedFileName"></strong> ready!
+                                    </p>
+                                    <p style="font-size:11px;color:var(--dash-text-muted);margin-top:4px;">
+                                        AI will use your uploaded data to generate the thesis
+                                    </p>
+                                    <input type="file" id="fileUpload" @change="handleFileUpload($event)" accept=".pdf,.doc,.docx" style="display:none;">
                                 </div>
-                            </template>
-                            <div x-show="generationComplete" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--dash-border);">
-                                <a :href="'/workspace/' + generatedProjectUUID" class="nuru-btn nuru-btn-grad" style="width:100%;justify-content:center;">Open Workspace →</a>
+                            </div>
+                            
+                            <!-- Generate Button -->
+                            <div style="margin-top:16px;">
+                                <div style="display:flex;align-items:center;justify-content:center;gap:12px;">
+                                    <span style="font-size:11px;color:var(--dash-text-muted);">
+                                        <span x-text="researchType === 'proposal' ? '15 credits' : '25 credits'"></span>
+                                    </span>
+                                    <span style="font-size:12px;color:var(--dash-text-secondary);">
+                                        <span x-text="researchType === 'proposal' ? 'Research Proposal' : 'Thesis'"></span> · APA 7
+                                    </span>
+                                    <button class="submit-arrow" @click="createProjectWithAI()" :disabled="!newProjectTitle.trim() || isGenerating">
+                                        <span x-show="!isGenerating">↑</span>
+                                        <span x-show="isGenerating" style="font-size:12px;">⏳</span>
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <!-- Generation Progress -->
+                            <div x-show="isGenerating" style="margin-top:24px;background:var(--dash-surface);border:1px solid var(--dash-border);border-radius:14px;padding:20px;text-align:left;">
+                                <div style="font-weight:600;margin-bottom:12px;color:var(--dash-text);">🚀 Generating your <span x-text="researchType"></span>...</div>
+                                <template x-for="step in generationSteps" :key="step.step">
+                                    <div style="display:flex;align-items:center;gap:10px;padding:8px 0;font-size:14px;color:var(--dash-text-secondary);">
+                                        <span x-show="step.status === 'processing'" style="animation:nuru-spin 1s linear infinite;">⏳</span>
+                                        <span x-show="step.status === 'completed'">✅</span>
+                                        <span x-text="step.message"></span>
+                                    </div>
+                                </template>
+                                <div x-show="generationComplete" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--dash-border);">
+                                    <a :href="'/workspace/' + generatedProjectUUID" class="nuru-btn nuru-btn-grad" style="width:100%;justify-content:center;">Open Workspace →</a>
+                                </div>
                             </div>
                         </div>
                         
-                        <div class="quick-row" style="justify-content:center;margin-top:16px;">
-                            <span class="label">Try:</span>
-                            <button class="quick-chip" @click="setPrompt('The impact of mobile banking on financial inclusion in rural Tanzania')">Financial inclusion thesis</button>
-                            <button class="quick-chip" @click="setPrompt('The role of AI in transforming human resource management in private sector organizations')">AI in HRM thesis</button>
-                            <button class="quick-chip" @click="setPrompt('The effect of social media marketing on consumer buying behavior in Tanzania')">Social media marketing</button>
-                        </div>
                     </section>
                 </div>
                 
@@ -209,22 +306,27 @@
                         <div class="tabs-lite">
                             <button class="tl" :class="{ active: activeTab === 'all' }" @click="activeTab = 'all'">All</button>
                             <button class="tl" :class="{ active: activeTab === 'draft' }" @click="activeTab = 'draft'">Drafting</button>
-                            <button class="tl" :class="{ active: activeTab === 'review' }" @click="activeTab = 'review'">In review</button>
                         </div>
                     </div>
                     <div class="proj-grid">
                         <template x-for="project in filteredProjects" :key="project.id">
-                            <a :href="'/workspace/' + project.uuid" class="proj">
+                            <a :href="project.type === 'chat' ? '/chat/' + project.uuid : '/workspace/' + project.uuid" class="proj">
                                 <div class="proj-thumb" :style="'background:' + getGradient(project.id)"></div>
                                 <div class="proj-body">
                                     <div class="proj-title" x-text="project.title"></div>
-                                    <div class="proj-meta">Thesis · APA 7 · <span x-text="project.word_count + ' words'"></span></div>
-                                    <div class="proj-foot"><span class="dot" :class="project.status"></span><span x-text="project.status.replace('_', ' ') + ' · ' + project.last_edited_at"></span></div>
+                                    <div class="proj-meta">
+                                        <span x-text="project.type === 'chat' ? '💬 Chat' : '📄 ' + project.type"></span> · 
+                                        <span x-text="project.word_count + ' words'"></span>
+                                    </div>
+                                    <div class="proj-foot">
+                                        <span class="dot" :class="project.status"></span>
+                                        <span x-text="project.status.replace('_', ' ') + ' · ' + project.last_edited_at"></span>
+                                    </div>
                                 </div>
                             </a>
                         </template>
                         <div x-show="filteredProjects.length === 0" class="empty-state">
-                            <div class="icon">📝</div><h3>No projects yet</h3><p>Describe your topic above!</p>
+                            <div class="icon">📝</div><h3>No projects yet</h3>
                         </div>
                     </div>
                 </section>
@@ -245,11 +347,14 @@
                 </div>
                 <div class="proj-grid">
                     <template x-for="project in sortedProjects" :key="project.id">
-                        <a :href="'/workspace/' + project.uuid" class="proj">
+                        <a :href="project.type === 'chat' ? '/chat/' + project.uuid : '/workspace/' + project.uuid" class="proj">
                             <div class="proj-thumb" :style="'background:' + getGradient(project.id)"></div>
                             <div class="proj-body">
                                 <div class="proj-title" x-text="project.title"></div>
-                                <div class="proj-meta">Thesis · APA 7 · <span x-text="project.word_count + ' words'"></span></div>
+                                <div class="proj-meta">
+                                    <span x-text="project.type === 'chat' ? '💬 Chat' : '📄 ' + project.type"></span> · 
+                                    <span x-text="project.word_count + ' words'"></span>
+                                </div>
                                 <div class="proj-foot">
                                     <span class="dot" :class="project.status"></span>
                                     <span x-text="project.status.replace('_', ' ') + ' · ' + project.last_edited_at"></span>
@@ -258,7 +363,6 @@
                             </div>
                         </a>
                     </template>
-                    <div x-show="sortedProjects.length === 0" class="empty-state"><div class="icon">📝</div><h3>No projects</h3></div>
                 </div>
             </div>
             
@@ -270,11 +374,9 @@
                     <h2>Source Library</h2>
                     <button class="nuru-btn" @click="copyAllCitations()">📋 Copy All APA 7</button>
                 </div>
-                
                 <div style="margin-bottom:16px;">
                     <input type="text" placeholder="Search sources..." x-model="sourceSearch" style="padding:8px 12px;border-radius:8px;border:1px solid var(--dash-border);background:var(--dash-surface);color:var(--dash-text);font-family:inherit;width:100%;">
                 </div>
-                
                 <template x-for="source in filteredSources" :key="source.id">
                     <div class="source-row">
                         <div style="flex:1;">
@@ -286,9 +388,6 @@
                         <button @click="deleteSource(source.id)" style="background:none;border:none;cursor:pointer;font-size:14px;">🗑</button>
                     </div>
                 </template>
-                <div x-show="filteredSources.length === 0" class="empty-state">
-                    <div class="icon">📚</div><h3>No sources yet</h3><p>Sources from your thesis projects will appear here.</p>
-                </div>
             </div>
             
         </main>
@@ -308,6 +407,15 @@
                 currentPage: 'home',
                 showAccountMenu: false,
                 
+                // Mode Switcher
+                activeMode: 'research',  // 'general' or 'research'
+                researchType: 'thesis',  // 'proposal' or 'thesis'
+                
+                // File Upload
+                uploadedFile: null,
+                uploadedFileName: '',
+                
+                // Project creation
                 isTyping: false, isGenerating: false, generationComplete: false,
                 textareaHeight: 56, searchQuery: '', activeTab: 'all',
                 newProjectTitle: '',
@@ -326,7 +434,6 @@
                 get filteredProjects() {
                     let f = this.projects;
                     if (this.activeTab === 'draft') f = f.filter(p => p.status === 'draft' || p.status === 'in_progress');
-                    else if (this.activeTab === 'review') f = f.filter(p => p.status === 'review');
                     if (this.searchQuery.trim()) {
                         const q = this.searchQuery.toLowerCase();
                         f = f.filter(p => p.title.toLowerCase().includes(q));
@@ -349,10 +456,7 @@
                 get filteredSources() {
                     if (!this.sourceSearch.trim()) return this.allSources;
                     const q = this.sourceSearch.toLowerCase();
-                    return this.allSources.filter(s => 
-                        (s.title||'').toLowerCase().includes(q) || 
-                        (s.author||'').toLowerCase().includes(q)
-                    );
+                    return this.allSources.filter(s => (s.title||'').toLowerCase().includes(q) || (s.author||'').toLowerCase().includes(q));
                 },
                 
                 async init() {
@@ -388,46 +492,96 @@
                     this.$nextTick(() => { const ta = this.$refs.promptTextarea; if(ta){ ta.style.height='auto'; this.textareaHeight = Math.min(ta.scrollHeight,200); } });
                 },
                 
-                setPrompt(t) { this.newProjectTitle = t; this.$nextTick(() => { const ta=this.$refs.promptTextarea; if(ta){ ta.focus(); ta.style.height='auto'; this.textareaHeight = Math.min(ta.scrollHeight,200); } }); },
+                handleFileUpload(e) {
+                    const file = e.target.files[0];
+                    if (file) {
+                        this.uploadedFile = file;
+                        this.uploadedFileName = file.name;
+                    }
+                },
+                
+                handleDrop(e) {
+                    const file = e.dataTransfer.files[0];
+                    if (file && file.type === 'application/pdf') {
+                        this.uploadedFile = file;
+                        this.uploadedFileName = file.name;
+                    }
+                },
                 
                 async createProjectWithAI() {
                     const topic = this.newProjectTitle.trim();
                     if (!topic || this.isGenerating) return;
+                    
                     this.isGenerating = true; this.generationComplete = false; this.generationSteps = [];
+                    
+                    const type = this.researchType === 'proposal' ? 'proposal' : 'thesis';
+                    const cost = this.researchType === 'proposal' ? 15 : 25;
+                    
                     try {
                         this.generationSteps.push({step:'create',status:'processing',message:'📁 Creating project...'});
-                        const project = await window.NuruAPI.createProject({title:topic,type:'thesis',citation_style:'APA7'});
-                        this.generationSteps[0].status='completed'; this.generationSteps[0].message='✅ Project created'; this.generatedProjectUUID = project.uuid;
-                        this.generationSteps.push({step:'generate',status:'processing',message:'🤖 AI generating thesis...'});
-                        const result = await fetch(`/api/projects/${this.generatedProjectUUID}/generate-complete`,{method:'POST',headers:{'Authorization':`Bearer ${localStorage.getItem('nuruxplore_token')}`,'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({topic})});
+                        const project = await window.NuruAPI.createProject({title:topic, type:type, citation_style:'APA7'});
+                        this.generationSteps[0].status='completed'; this.generationSteps[0].message='✅ Project created';
+                        this.generatedProjectUUID = project.uuid;
+                        
+                        // Upload file if present
+                        if (this.uploadedFile) {
+                            this.generationSteps.push({step:'upload',status:'processing',message:'📁 Uploading your document...'});
+                            const formData = new FormData();
+                            formData.append('project_id', project.id);
+                            formData.append('file', this.uploadedFile);
+                            
+                            await fetch('/api/sources/upload', {
+                                method: 'POST',
+                                headers: { 'Authorization': `Bearer ${localStorage.getItem('nuruxplore_token')}` },
+                                body: formData,
+                            });
+                            this.generationSteps[this.generationSteps.length-1].status = 'completed';
+                            this.generationSteps[this.generationSteps.length-1].message = '✅ Document uploaded';
+                        }
+                        
+                        // Generate
+                        this.generationSteps.push({step:'generate',status:'processing',message:'🤖 AI generating...'});
+                        const result = await fetch(`/api/projects/${this.generatedProjectUUID}/generate-complete`,{
+                            method:'POST',
+                            headers:{
+                                'Authorization':`Bearer ${localStorage.getItem('nuruxplore_token')}`,
+                                'Content-Type':'application/json',
+                                'Accept':'application/json'
+                            },
+                            body:JSON.stringify({topic, type:type})
+                        });
+                        
                         const data = await result.json();
-                        if(result.ok&&data.steps){this.generationSteps=data.steps;this.generationComplete=true;this.credits=data.credits_remaining;setTimeout(()=>{window.location.href='/workspace/'+this.generatedProjectUUID;},2000);}
-                        else{this.generationSteps.push({step:'error',status:'completed',message:'❌ '+(data.message||'Generation failed.')});}
-                    }catch(e){this.generationSteps.push({step:'error',status:'completed',message:'❌ '+e.message});}
-                    this.isGenerating=false; await this.loadProjects();
+                        if(result.ok&&data.steps){
+                            this.generationSteps=data.steps;
+                            this.generationComplete=true;
+                            this.credits=data.credits_remaining;
+                            setTimeout(()=>{window.location.href='/workspace/'+this.generatedProjectUUID;},2000);
+                        } else {
+                            this.generationSteps.push({step:'error',status:'completed',message:'❌ '+(data.message||'Generation failed.')});
+                        }
+                    } catch(e) {
+                        this.generationSteps.push({step:'error',status:'completed',message:'❌ '+e.message});
+                    }
+                    
+                    this.isGenerating=false;
+                    this.uploadedFile = null;
+                    this.uploadedFileName = '';
+                    await this.loadProjects();
                 },
                 
-                async deleteProject(uuid) { if(!confirm('Delete this project?'))return; try{await window.NuruAPI.deleteProject(uuid);await this.loadProjects();}catch(e){} },
+                async deleteProject(uuid) { if(!confirm('Delete?'))return; try{await window.NuruAPI.deleteProject(uuid);await this.loadProjects();}catch(e){} },
                 async deleteSource(id) { if(!confirm('Delete?'))return; try{await window.NuruAPI.deleteSource(id);await this.loadAllSources();}catch(e){} },
                 
                 generateAPA(source) {
-                    const author = source.author || 'Unknown';
-                    const year = source.year || 'n.d.';
-                    const title = source.title || 'Untitled';
-                    return `${author} (${year}). ${title}.`;
+                    return `${source.author||'Unknown'} (${source.year||'n.d.'}). ${source.title||'Untitled'}.`;
                 },
                 
-                copySourceCitation(source) {
-                    const cite = this.generateAPA(source);
-                    navigator.clipboard.writeText(cite);
-                    alert('Copied!');
-                },
-                
+                copySourceCitation(source) { navigator.clipboard.writeText(this.generateAPA(source)); alert('Copied!'); },
                 copyAllCitations() {
-                    if (this.allSources.length === 0) { alert('No sources to copy.'); return; }
-                    const text = this.allSources.map(s=>this.generateAPA(s)).join('\n\n');
-                    navigator.clipboard.writeText(text);
-                    alert('All APA 7 citations copied!');
+                    if (!this.allSources.length) { alert('No sources.'); return; }
+                    navigator.clipboard.writeText(this.allSources.map(s=>this.generateAPA(s)).join('\n\n'));
+                    alert('All citations copied!');
                 },
                 
                 toggleDarkMode() { this.darkMode=!this.darkMode; localStorage.setItem('nuruxplore_theme',this.darkMode?'dark':'light'); document.documentElement.setAttribute('data-theme',this.darkMode?'dark':'light'); },

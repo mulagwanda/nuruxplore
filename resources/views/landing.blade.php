@@ -205,10 +205,10 @@
                     @auth
                         <a href="/dashboard" class="text-sm text-gray-400 hover:text-white transition">Dashboard</a>
                         <span class="text-sm text-gray-500">|</span>
-                        <form method="POST" action="/api/auth/logout" class="inline" id="logoutForm">
-                            @csrf
-                            <a href="#" onclick="document.getElementById('logoutForm').submit(); return false;" class="text-sm text-gray-400 hover:text-white transition">Log out</a>
-                        </form>
+                        <form id="logoutForm" onsubmit="event.preventDefault(); logoutUser();" style="display:inline;">
+    @csrf
+    <a href="#" onclick="document.getElementById('logoutForm').dispatchEvent(new Event('submit'));" class="text-sm text-gray-400 hover:text-white transition">Log out</a>
+</form>
                     @else
                         <a href="/login" class="text-sm text-gray-400 hover:text-white transition">Log in</a>
                         <a href="/register" class="text-sm px-5 py-2.5 bg-white text-black rounded-full font-semibold hover:bg-gray-200 transition">Sign up free</a>
@@ -505,6 +505,24 @@
         document.documentElement.setAttribute('data-theme', saved);
         document.getElementById('themeIcon').textContent = saved === 'dark' ? '☀️' : '🌙';
     })();
+
+
+    async function logoutUser() {
+    const token = localStorage.getItem('nuruxplore_token');
+    try {
+        await fetch('/api/auth/logout', {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Bearer ' + token,
+                'Accept': 'application/json',
+                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '',
+            }
+        });
+    } catch(e) {}
+    localStorage.removeItem('nuruxplore_token');
+    localStorage.removeItem('nuruxplore_user');
+    window.location.href = '/';
+}
     </script>
 
 </body>

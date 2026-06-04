@@ -46,7 +46,7 @@ class ProjectController extends Controller
 {
     $validated = $request->validate([
         'title' => 'required|string|max:255',
-        'type' => 'required|in:thesis,dissertation,literature_review,lab_report,case_study,capstone',
+        'type' => 'required|in:thesis,dissertation,literature_review,lab_report,case_study,capstone,chat,proposal',
         'citation_style' => 'in:APA7,MLA,Chicago,IEEE',
         'description' => 'nullable|string|max:1000',
         'research_question' => 'nullable|string|max:1000',
@@ -204,37 +204,39 @@ class ProjectController extends Controller
 
     // generateComplete() - uses UUID
     public function generateComplete(Request $request, NuruxploreProject $project): JsonResponse
-    {
-        if ($project->user_id !== $request->user()->id) {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
-
-        $user = $request->user();
-        if ($user->credits_balance < 25) {
-            return response()->json([
-                'message' => 'Insufficient credits. Need 25 credits.', 
-                'credits_balance' => $user->credits_balance
-            ], 402);
-        }
-
-        $topic = $request->input('topic', $project->title);
-        $user->deductCredits(25, 'Complete thesis generation', $project->id);
-        
-        $steps = $this->nuruAI->generateCompleteThesis($project, $topic);
-
-        return response()->json([
-            'success' => true,
-            'steps' => $steps,
-            'project_uuid' => $project->uuid,
-            'project' => [
-                'uuid' => $project->uuid,
-                'title' => $project->fresh()->title,
-                'content' => $project->fresh()->content,
-                'word_count' => $project->fresh()->word_count,
-            ],
-            'credits_remaining' => $user->fresh()->credits_balance,
-        ]);
+{
+    if ($project->user_id !== $request->user()->id) {
+        return response()->json(['message' => 'Unauthorized'], 403);
     }
+
+    $user = $request->user();
+    $type = $request->input('type', 'thesis');
+    $cost = $type === 'proposal' ? 15 : 25;
+    
+    if ($user->credits_balance < $cost) {
+        return response()->json([
+            'message' => "Insufficient credits. Need {$cost} credits.",
+            'credits_balance' => $user->credits_balance
+        ], 402);
+    }
+
+    $topic = $request->input('topic', $project->title);
+    $user->deductCredits($cost, ucfirst($type) . ' generation', $project->id);
+    $steps = $this->nuruAI->generateCompleteThesis($project, $topic, $type);
+
+    return response()->json([
+        'success' => true,
+        'steps' => $steps,
+        'project_uuid' => $project->uuid,
+        'project' => [
+            'uuid' => $project->fresh()->uuid,
+            'title' => $project->fresh()->title,
+            'content' => $project->fresh()->content,
+            'word_count' => $project->fresh()->word_count,
+        ],
+        'credits_remaining' => $user->fresh()->credits_balance,
+    ]);
+}
 
     protected function parseOutlineFromAI(string $aiResponse): array
     {

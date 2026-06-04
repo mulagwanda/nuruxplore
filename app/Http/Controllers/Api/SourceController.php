@@ -83,35 +83,42 @@ class SourceController extends Controller
      * Upload a file as a source
      */
     public function upload(Request $request): JsonResponse
-    {
-        $validated = $request->validate([
-            'project_id' => 'required|exists:nuruxplore_projects,id',
-            'file' => 'required|file|mimes:pdf,doc,docx|max:10240',
-            'title' => 'nullable|string|max:500',
-        ]);
+{
+    $validated = $request->validate([
+        'project_id' => 'required|exists:nuruxplore_projects,id',
+        'file' => 'required|file|mimes:pdf,doc,docx|max:10240',
+        'title' => 'nullable|string|max:500',
+    ]);
 
-        $project = NuruxploreProject::findOrFail($validated['project_id']);
-        
-        if ($project->user_id !== $request->user()->id) {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
-
-        $file = $request->file('file');
-        $path = $file->store('sources/' . $request->user()->id, 'public');
-
-        $source = $project->sources()->create([
-            'user_id' => $request->user()->id,
-            'title' => $validated['title'] ?? $file->getClientOriginalName(),
-            'type' => 'journal',
-            'file_path' => $path,
-            'verification_status' => 'unverified',
-        ]);
-
-        return response()->json([
-            'source' => $source,
-            'message' => 'File uploaded successfully',
-        ], 201);
+    $project = NuruxploreProject::findOrFail($validated['project_id']);
+    
+    if ($project->user_id !== $request->user()->id) {
+        return response()->json(['message' => 'Unauthorized'], 403);
     }
+
+    $file = $request->file('file');
+    $path = $file->store('sources/' . $request->user()->id, 'public');
+
+    $source = $project->sources()->create([
+        'user_id' => $request->user()->id,
+        'title' => $validated['title'] ?? $file->getClientOriginalName(),
+        'type' => 'other',
+        'file_path' => $path,
+        'verification_status' => 'unverified',
+    ]);
+
+    // Auto-extract text from PDF
+    if ($file->getClientOriginalExtension() === 'pdf') {
+        $extractionService = app(\App\Services\PDFExtractionService::class);
+        $extractionService->extractAndSave($source);
+    }
+
+    return response()->json([
+        'source' => $source->fresh(),
+        'has_extracted_text' => !empty($source->fresh()->extracted_text),
+        'message' => 'File uploaded successfully',
+    ], 201);
+}
 
     /**
      * Verify a source
