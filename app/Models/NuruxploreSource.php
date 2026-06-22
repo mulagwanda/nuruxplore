@@ -37,4 +37,20 @@ class NuruxploreSource extends Model
     {
         return $this->belongsTo(NuruxploreProject::class, 'project_id');
     }
+
+    public function role(): string
+    {
+        return $this->metadata['document_role'] ?? $this->type ?? 'other';
+    }
+
+    public function markExtraction(string $status, ?string $message = null, array $extra = []): void
+    {
+        $metadata = $this->metadata ?? [];
+        $metadata['extraction_status'] = $status;
+        if ($message !== null) {
+            $metadata['extraction_message'] = $message;
+        }
+        $metadata = array_merge($metadata, $extra);
+        $this->forceFill(['metadata' => $metadata])->save();
+    }
 }

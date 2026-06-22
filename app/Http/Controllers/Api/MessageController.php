@@ -4,26 +4,18 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\NuruxploreProject;
-use App\Services\GroqAIService;
 use App\Services\NuruAIService;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 class MessageController extends Controller
 {
-    protected GroqAIService $aiService;
-    protected NuruAIService $nuruAI;
-
-    public function __construct(GroqAIService $aiService, NuruAIService $nuruAI)
+    public function __construct(protected NuruAIService $nuruAI)
     {
-        $this->aiService = $aiService;
-        $this->nuruAI = $nuruAI;
     }
 
-    public function index($projectUuid): JsonResponse
+    public function index(NuruxploreProject $project): JsonResponse
     {
-        $project = NuruxploreProject::where('uuid', $projectUuid)->firstOrFail();
-        
         if ($project->user_id !== request()->user()->id) {
             return response()->json(['message' => 'Unauthorized'], 403);
         }
@@ -31,58 +23,91 @@ class MessageController extends Controller
         $messages = $project->messages()
             ->orderBy('created_at')
             ->get()
-            ->map(fn($msg) => [
-                'id' => $msg->id,
-                'role' => $msg->role,
-                'content' => $msg->content,
-                'created_at' => $msg->created_at->format('H:i'),
+            ->map(fn ($message) => [
+                'id' => $message->id,
+                'role' => $message->role,
+                'content' => $message->content,
+                'metadata' => $message->metadata,
+                'action_type' => $message->action_type,
+                'credits_used' => $message->credits_used,
+                'created_at' => $message->created_at?->toISOString(),
             ]);
 
         return response()->json(['messages' => $messages]);
     }
 
-    public function store(Request $request, $projectUuid): JsonResponse
+    public function store(Request $request, NuruxploreProject $project): JsonResponse
     {
-        $project = NuruxploreProject::where('uuid', $projectUuid)->firstOrFail();
-        
         if ($project->user_id !== $request->user()->id) {
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
-        $user = $request->user();
-        $creditCost = 2;
+        $validated = $request->validate([
+            'message' => 'required|string|max:12000',
+            'action_type' => 'nullable|string|max:50',
+        ]);
 
-        if ($user->credits_balance < $creditCost) {
+        $user = $request->user();
+        $cost = $project->type === 'chat' ? 1 : 2;
+
+        if ($user->credits_balance < $cost) {
             return response()->json([
-                'message' => "Insufficient credits. Need {$creditCost} credits.",
+                'message' => "Insufficient credits. You need {$cost} credits.",
                 'credits_balance' => $user->credits_balance,
             ], 402);
         }
 
-        // Save user message
         $userMessage = $project->messages()->create([
             'user_id' => $user->id,
             'role' => 'user',
-            'content' => $request->input('message'),
+            'content' => $validated['message'],
+            'action_type' => $validated['action_type'] ?? 'chat',
+            'credits_used' => 0,
         ]);
 
-        // Process with AI
-        $result = $this->nuruAI->smartChat($project, $request->input('message'));
-        
-        $user->deductCredits($creditCost, 'AI Chat', $project->id);
+        // Sends the latest 10-20 messages to AI, and for workspace projects can apply targeted document edits.
+        $result = $this->nuruAI->smartChat($project->fresh(), $validated['message'], 20);
 
-        // Save AI response
-        $project->messages()->create([
+        $assistantMessage = $project->messages()->create([
             'user_id' => $user->id,
             'role' => 'assistant',
-            'content' => $result['message'] ?? 'Done!',
-            'credits_used' => $creditCost,
+            'content' => $result['message'] ?? 'Done.',
+            'action_type' => $result['action'] ?? 'chat',
+            'credits_used' => $cost,
+            'metadata' => [
+                'model' => $result['model'] ?? null,
+                'tokens_used' => $result['tokens_used'] ?? 0,
+                'history_messages_sent' => 20,
+                'document_updated' => $result['document_updated'] ?? false,
+                'target_section' => $result['target_section'] ?? null,
+                'edit_type' => $result['edit_type'] ?? null,
+            ],
         ]);
 
+        $user->deductCredits($cost, 'AI workspace: ' . ($result['action'] ?? 'chat'), $project->id);
+        $project->update(['last_edited_at' => now()]);
+
+        $freshProject = $project->fresh();
+
         return response()->json([
-            'user_message' => ['id' => $userMessage->id, 'role' => 'user', 'content' => $userMessage->content],
+            'success' => true,
             'action' => $result['action'] ?? 'chat',
-            'message' => $result['message'] ?? 'Done!',
+            'message' => $result['message'] ?? 'Done.',
+            'document_updated' => $result['document_updated'] ?? false,
+            'target_section' => $result['target_section'] ?? null,
+            'edit_type' => $result['edit_type'] ?? null,
+            'project' => [
+                'id' => $freshProject->id,
+                'uuid' => $freshProject->uuid,
+                'title' => $freshProject->title,
+                'type' => $freshProject->type,
+                'status' => $freshProject->status,
+                'word_count' => $freshProject->word_count,
+                'content' => $freshProject->content,
+                'last_edited_at' => $freshProject->last_edited_at?->diffForHumans(),
+            ],
+            'user_message' => $userMessage,
+            'assistant_message' => $assistantMessage,
             'credits_remaining' => $user->fresh()->credits_balance,
         ]);
     }

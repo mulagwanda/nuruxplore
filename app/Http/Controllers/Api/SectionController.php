@@ -3,77 +3,40 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\NuruxploreSection;
 use App\Models\NuruxploreProject;
-use App\Services\GroqAIService;
-use Illuminate\Http\Request;
+use App\Models\NuruxploreSection;
+use App\Services\NuruAIService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 class SectionController extends Controller
 {
-    protected GroqAIService $aiService;
-
-    public function __construct(GroqAIService $aiService)
+    public function __construct(protected NuruAIService $nuruAI)
     {
-        $this->aiService = $aiService;
     }
 
-    /**
-     * List all sections for a project
-     */
     public function index($projectUuid): JsonResponse
     {
         $project = NuruxploreProject::where('uuid', $projectUuid)->firstOrFail();
-        
-        if ($project->user_id !== request()->user()->id) {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
+        $this->authorizeProject($project);
 
-        $sections = $project->sections()
+        $sections = $project->topLevelSections()
             ->with('children')
-            ->whereNull('parent_id')
-            ->orderBy('order')
             ->get()
-            ->map(function ($section) {
-                return [
-                    'id' => $section->id,
-                    'title' => $section->title,
-                    'section_number' => $section->section_number,
-                    'status' => $section->status,
-                    'word_count' => $section->word_count,
-                    'order' => $section->order,
-                    'has_content' => !empty($section->content),
-                    'content' => $section->content,
-                    'children' => $section->children->map(fn($child) => [
-                        'id' => $child->id,
-                        'title' => $child->title,
-                        'section_number' => $child->section_number,
-                        'status' => $child->status,
-                        'word_count' => $child->word_count,
-                        'order' => $child->order,
-                        'has_content' => !empty($child->content),
-                        'content' => $child->content,
-                    ]),
-                ];
-            });
+            ->map(fn ($section) => $this->sectionPayload($section, true));
 
         return response()->json([
             'sections' => $sections,
             'project_status' => $project->status,
+            'research_profile_status' => $project->research_profile_status ?? 'missing',
             'total_word_count' => $project->word_count,
         ]);
     }
 
-    /**
-     * Create a new section
-     */
     public function store(Request $request, $projectUuid): JsonResponse
     {
         $project = NuruxploreProject::where('uuid', $projectUuid)->firstOrFail();
-        
-        if ($project->user_id !== $request->user()->id) {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
+        $this->authorizeProject($project, $request);
 
         $validated = $request->validate([
             'title' => 'required|string|max:255',
@@ -81,6 +44,11 @@ class SectionController extends Controller
             'parent_id' => 'nullable|exists:nuruxplore_sections,id',
             'order' => 'nullable|integer',
         ]);
+
+        if (!empty($validated['parent_id'])) {
+            $parent = NuruxploreSection::findOrFail($validated['parent_id']);
+            abort_if($parent->project_id !== $project->id, 422, 'Parent section does not belong to this project.');
+        }
 
         $maxOrder = NuruxploreSection::where('project_id', $project->id)
             ->where('parent_id', $validated['parent_id'] ?? null)
@@ -96,41 +64,30 @@ class SectionController extends Controller
 
         $project->update(['last_edited_at' => now()]);
 
-        return response()->json($section, 201);
+        return response()->json($this->sectionPayload($section), 201);
     }
 
-    /**
-     * Get a single section
-     */
     public function show($id): JsonResponse
     {
         $section = NuruxploreSection::with(['children', 'parent', 'project'])->findOrFail($id);
-        
-        if ($section->project->user_id !== request()->user()->id) {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
+        $this->authorizeProject($section->project);
 
         return response()->json([
-            'section' => $section,
+            'section' => $this->sectionPayload($section, true),
             'project' => [
                 'id' => $section->project->id,
                 'uuid' => $section->project->uuid,
                 'title' => $section->project->title,
                 'citation_style' => $section->project->citation_style,
+                'research_profile_status' => $section->project->research_profile_status,
             ],
         ]);
     }
 
-    /**
-     * Update a section
-     */
     public function update(Request $request, $id): JsonResponse
     {
-        $section = NuruxploreSection::findOrFail($id);
-        
-        if ($section->project->user_id !== $request->user()->id) {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
+        $section = NuruxploreSection::with('project')->findOrFail($id);
+        $this->authorizeProject($section->project, $request);
 
         $validated = $request->validate([
             'title' => 'sometimes|string|max:255',
@@ -138,33 +95,23 @@ class SectionController extends Controller
             'section_number' => 'sometimes|nullable|string|max:20',
             'status' => 'sometimes|in:outlined,drafting,drafted,revising,complete',
             'order' => 'sometimes|integer',
+            'ai_metadata' => 'sometimes|nullable|array',
         ]);
 
         $section->update($validated);
         $section->project->update(['last_edited_at' => now()]);
 
-        return response()->json($section->fresh());
+        return response()->json($this->sectionPayload($section->fresh()));
     }
 
-    /**
-     * Delete a section
-     */
     public function destroy($id): JsonResponse
     {
-        $section = NuruxploreSection::findOrFail($id);
-        
-        if ($section->project->user_id !== request()->user()->id) {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
-
+        $section = NuruxploreSection::with('project')->findOrFail($id);
+        $this->authorizeProject($section->project);
         $section->delete();
-
         return response()->json(null, 204);
     }
 
-    /**
-     * Reorder sections
-     */
     public function reorder(Request $request): JsonResponse
     {
         $validated = $request->validate([
@@ -174,8 +121,20 @@ class SectionController extends Controller
             'sections.*.parent_id' => 'nullable|exists:nuruxplore_sections,id',
         ]);
 
+        $first = NuruxploreSection::with('project')->findOrFail($validated['sections'][0]['id']);
+        $this->authorizeProject($first->project, $request);
+
         foreach ($validated['sections'] as $sectionData) {
-            NuruxploreSection::where('id', $sectionData['id'])->update([
+            $section = NuruxploreSection::findOrFail($sectionData['id']);
+            abort_if($section->project_id !== $first->project_id, 422, 'All reordered sections must belong to the same project.');
+
+            if (!empty($sectionData['parent_id'])) {
+                $parent = NuruxploreSection::findOrFail($sectionData['parent_id']);
+                abort_if($parent->project_id !== $first->project_id, 422, 'Parent section does not belong to this project.');
+                abort_if((int) $sectionData['parent_id'] === (int) $section->id, 422, 'A section cannot be its own parent.');
+            }
+
+            $section->update([
                 'order' => $sectionData['order'],
                 'parent_id' => $sectionData['parent_id'] ?? null,
             ]);
@@ -185,121 +144,137 @@ class SectionController extends Controller
     }
 
     /**
-     * AI-Powered Section Content Generation
+     * Generate one section.
+     * The AI service now returns body-only content; headings are owned by assembler/exporter.
      */
     public function aiGenerate(Request $request, $id): JsonResponse
     {
-        $section = NuruxploreSection::with('project')->findOrFail($id);
+        $section = NuruxploreSection::with(['project', 'parent'])->findOrFail($id);
         $project = $section->project;
+        $this->authorizeProject($project, $request);
 
-        if ($project->user_id !== $request->user()->id) {
-            return response()->json(['message' => 'Unauthorized'], 403);
+        $validated = $request->validate([
+            'instruction' => 'nullable|string|max:1000',
+        ]);
+
+        if (empty($project->research_profile)) {
+            return response()->json([
+                'message' => 'Build and approve the research profile before generating sections.',
+            ], 422);
         }
 
         $user = $request->user();
-        if ($user->credits_balance < 5) {
+        $cost = 5;
+        if ($user->credits_balance < $cost) {
             return response()->json([
                 'message' => 'Insufficient credits. You need 5 credits.',
                 'credits_balance' => $user->credits_balance,
             ], 402);
         }
 
-        // Build context for AI
-        $context = "Project: {$project->title}\n";
-        $context .= "Type: {$project->type}\n";
-        $context .= "Citation Style: {$project->citation_style}\n";
-        $context .= "Section: {$section->title}\n";
-        
-        if ($project->research_question) {
-            $context .= "Research Question: {$project->research_question}\n";
-        }
+        $section->update(['status' => 'drafting']);
 
-        // Generate with AI
-        $result = $this->aiService->generateSection(
-            $section->title,
-            $context,
-            $project->citation_style
+        $result = $this->nuruAI->generateSectionFromProfile(
+            $section->fresh(['project', 'parent']),
+            $validated['instruction'] ?? null
         );
 
         if (!$result['success']) {
-            return response()->json(['message' => $result['error']], 500);
+            $section->update(['status' => blank($section->content) ? 'outlined' : 'drafted']);
+            return response()->json([
+                'message' => $result['error'] ?? 'Section generation failed.',
+            ], 500);
         }
 
-        // Deduct credits
-        $user->deductCredits(5, 'Section generation: ' . $section->title, $project->id);
-
-        // Update section
-        $section->update([
-            'content' => $result['content'],
-            'status' => 'drafted',
-            'ai_metadata' => [
-                'model' => $result['model'] ?? 'groq',
-                'tokens_used' => $result['tokens_used'] ?? 0,
-                'generated_at' => now()->toISOString(),
-            ],
-        ]);
-
-        $project->update(['last_edited_at' => now()]);
+        $user->deductCredits($cost, 'Section generation: ' . $section->title, $project->id);
 
         return response()->json([
             'success' => true,
-            'section' => $section->fresh(),
+            'section' => $this->sectionPayload($section->fresh()),
             'credits_remaining' => $user->fresh()->credits_balance,
+            'quality_flags' => $result['quality_flags'] ?? [],
             'message' => 'Section generated successfully',
         ]);
     }
 
     /**
-     * AI-Powered Section Revision
+     * Revise one section only; does not rewrite the whole thesis.
      */
     public function aiRevise(Request $request, $id): JsonResponse
     {
-        $section = NuruxploreSection::with('project')->findOrFail($id);
+        $section = NuruxploreSection::with(['project', 'parent'])->findOrFail($id);
         $project = $section->project;
-
-        if ($project->user_id !== $request->user()->id) {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
+        $this->authorizeProject($project, $request);
 
         $validated = $request->validate([
-            'instruction' => 'required|string|max:500',
+            'instruction' => 'required|string|max:1000',
         ]);
 
         $user = $request->user();
-        if ($user->credits_balance < 2) {
+        $cost = 2;
+        if ($user->credits_balance < $cost) {
             return response()->json([
                 'message' => 'Insufficient credits. You need 2 credits.',
                 'credits_balance' => $user->credits_balance,
             ], 402);
         }
 
-        if (empty($section->content)) {
-            return response()->json(['message' => 'Section has no content to revise. Generate content first.'], 400);
+        if (blank($section->content)) {
+            return response()->json([
+                'message' => 'Section has no content to revise. Generate content first.',
+            ], 400);
         }
 
-        $result = $this->aiService->reviseContent(
-            $section->content,
-            $validated['instruction']
-        );
+        $section->update(['status' => 'revising']);
+
+        $result = $this->nuruAI->reviseSection($section->fresh(['project', 'parent']), $validated['instruction']);
 
         if (!$result['success']) {
-            return response()->json(['message' => $result['error']], 500);
+            $section->update(['status' => 'drafted']);
+            return response()->json([
+                'message' => $result['error'] ?? 'Section revision failed.',
+            ], 500);
         }
 
-        $user->deductCredits(2, 'Section revision: ' . $section->title, $project->id);
-
-        $section->update([
-            'content' => $result['content'],
-            'status' => 'revising',
-        ]);
-
-        $project->update(['last_edited_at' => now()]);
+        $user->deductCredits($cost, 'Section revision: ' . $section->title, $project->id);
 
         return response()->json([
             'success' => true,
-            'section' => $section->fresh(),
+            'section' => $this->sectionPayload($section->fresh()),
             'credits_remaining' => $user->fresh()->credits_balance,
+            'quality_flags' => $result['quality_flags'] ?? [],
             'message' => 'Section revised successfully',
         ]);
+    }
+
+    protected function sectionPayload(NuruxploreSection $section, bool $withChildren = false): array
+    {
+        $payload = [
+            'id' => $section->id,
+            'title' => $section->title,
+            'section_number' => $section->section_number,
+            'content' => $section->content,
+            'status' => $section->status,
+            'word_count' => $section->word_count,
+            'order' => $section->order,
+            'parent_id' => $section->parent_id,
+            'has_content' => !empty($section->content),
+            'ai_metadata' => $section->ai_metadata,
+        ];
+
+        if ($withChildren) {
+            $payload['children'] = $section->children
+                ->sortBy('order')
+                ->map(fn ($child) => $this->sectionPayload($child))
+                ->values();
+        }
+
+        return $payload;
+    }
+
+    protected function authorizeProject(NuruxploreProject $project, ?Request $request = null): void
+    {
+        $user = $request?->user() ?? request()->user();
+        abort_if(!$user || $project->user_id !== $user->id, 403, 'Unauthorized');
     }
 }

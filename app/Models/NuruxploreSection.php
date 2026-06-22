@@ -41,13 +41,35 @@ class NuruxploreSection extends Model
         return $this->hasMany(NuruxploreSection::class, 'parent_id')->orderBy('order');
     }
 
-    protected static function booted()
+    public function summary(): ?string
     {
+        return $this->ai_metadata['summary'] ?? null;
+    }
+
+    public function setMetadataValue(string $key, mixed $value): void
+    {
+        $metadata = $this->ai_metadata ?? [];
+        $metadata[$key] = $value;
+        $this->forceFill(['ai_metadata' => $metadata])->save();
+    }
+
+    protected static function booted(): void
+    {
+        static::saving(function ($section) {
+            if (array_key_exists('content', $section->getAttributes())) {
+                $section->word_count = str_word_count(strip_tags((string) $section->content));
+            }
+        });
+
         static::saved(function ($section) {
-            if ($section->content) {
-                $section->word_count = str_word_count(strip_tags($section->content));
-                $section->saveQuietly();
+            if ($section->relationLoaded('project')) {
                 $section->project->updateWordCount();
+                return;
+            }
+
+            $project = $section->project;
+            if ($project) {
+                $project->updateWordCount();
             }
         });
     }

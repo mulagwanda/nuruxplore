@@ -20,25 +20,34 @@ class NuruxploreProject extends Model
         'citation_style',
         'description',
         'research_question',
+        'research_profile',
+        'research_profile_status',
+        'research_profile_approved_at',
+        'generation_settings',
         'structure',
+        'content',
         'word_count',
         'status',
         'last_edited_at',
     ];
 
     protected $casts = [
+        'research_profile' => 'array',
+        'generation_settings' => 'array',
         'structure' => 'array',
         'last_edited_at' => 'datetime',
+        'research_profile_approved_at' => 'datetime',
     ];
 
-    protected static function booted()
+    protected static function booted(): void
     {
         static::creating(function ($project) {
-            $project->uuid = (string) Str::uuid();
+            if (empty($project->uuid)) {
+                $project->uuid = (string) Str::uuid();
+            }
         });
     }
 
-    // Route binding by UUID
     public function getRouteKeyName(): string
     {
         return 'uuid';
@@ -69,9 +78,26 @@ class NuruxploreProject extends Model
         return $this->hasMany(NuruxploreVersion::class, 'project_id');
     }
 
+    public function topLevelSections(): HasMany
+    {
+        return $this->hasMany(NuruxploreSection::class, 'project_id')
+            ->whereNull('parent_id')
+            ->orderBy('order');
+    }
+
+    public function hasApprovedResearchProfile(): bool
+    {
+        return $this->research_profile_status === 'approved' && !empty($this->research_profile);
+    }
+
     public function updateWordCount(): void
     {
-        $this->word_count = $this->sections()->sum('word_count');
-        $this->save();
+        $sectionsWordCount = (int) $this->sections()->sum('word_count');
+
+        $this->forceFill([
+            'word_count' => $sectionsWordCount > 0
+                ? $sectionsWordCount
+                : str_word_count(strip_tags((string) $this->content)),
+        ])->saveQuietly();
     }
 }
