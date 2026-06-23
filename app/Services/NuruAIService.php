@@ -619,12 +619,110 @@ EOT;
             return $this->handleGeneralChatWithHistory($project, $historyLimit);
         }
 
+        // Workspace document generation must update project.content, not return the full document as a chat bubble.
+        // This protects proposal projects where users type commands like:
+        // "generate the proposal", "write my research proposal", or "regenerate the full proposal".
+        if ($this->isWorkspaceDocumentGenerationRequest($project, $userMessage)) {
+            return $this->handleWorkspaceDocumentGeneration($project, $userMessage, $historyLimit);
+        }
+
         $intent = $this->classifyWorkspaceIntent($userMessage, $project);
+
+        if (in_array(($intent['operation'] ?? ''), ['generate_proposal_document', 'generate_thesis_document', 'regenerate_document'], true)) {
+            return $this->handleWorkspaceDocumentGeneration($project, $userMessage, $historyLimit);
+        }
+
         if (($intent['mode'] ?? 'chat') === 'edit') {
             return $this->handleTargetedWorkspaceEdit($project, $userMessage, $intent, $historyLimit);
         }
 
         return $this->handleProjectChatWithHistory($project, $historyLimit);
+    }
+
+
+    protected function isWorkspaceDocumentGenerationRequest(NuruxploreProject $project, string $message): bool
+    {
+        $msg = strtolower(trim($message));
+        if ($msg === '') {
+            return false;
+        }
+
+        $hasGenerateVerb = (bool) preg_match('/(generate|create|write|draft|compose|regenerate|recreate|start|build)/i', $message);
+        if (!$hasGenerateVerb) {
+            return false;
+        }
+
+        $mentionsProposal = (bool) preg_match('/(research\s+proposal|proposal)/i', $message);
+        $mentionsThesis = (bool) preg_match('/(full\s+thesis|thesis|dissertation)/i', $message);
+        $mentionsWholeDocument = (bool) preg_match('/(full\s+document|whole\s+document|entire\s+document|document\s+preview|right\s+side|preview)/i', $message);
+
+        // If the workspace has no document yet and this is a proposal project, a command like
+        // "generate it" or "write the document" should create project.content instead of chatting.
+        $documentIsEmpty = blank($project->content ?? '');
+        $projectIsProposal = $project->type === 'proposal';
+
+        return $mentionsProposal
+            || $mentionsThesis
+            || $mentionsWholeDocument
+            || ($projectIsProposal && $documentIsEmpty && (bool) preg_match('/(generate|create|write|draft|compose|start)/i', $message));
+    }
+
+    protected function handleWorkspaceDocumentGeneration(NuruxploreProject $project, string $userMessage, int $historyLimit = 20): array
+    {
+        $project = $project->fresh(['sources', 'sections.children']);
+        $msg = strtolower($userMessage);
+
+        $type = $project->type ?: 'thesis';
+        if (preg_match('/(research\s+proposal|proposal)/i', $userMessage)) {
+            $type = 'proposal';
+        } elseif (preg_match('/(full\s+thesis|thesis|dissertation)/i', $userMessage)) {
+            $type = $project->type === 'dissertation' ? 'dissertation' : 'thesis';
+        }
+
+        if (!in_array($type, ['proposal', 'thesis', 'dissertation'], true)) {
+            $type = $project->type === 'proposal' ? 'proposal' : 'thesis';
+        }
+
+        $topic = $project->title;
+        $steps = $this->generateCompleteThesis($project, $topic, $type);
+        $failed = collect($steps)->contains(fn ($step) => ($step['status'] ?? null) === 'failed');
+        $fresh = $project->fresh();
+
+        if ($failed) {
+            $failedStep = collect($steps)->first(fn ($step) => ($step['status'] ?? null) === 'failed');
+            return [
+                'action' => 'generate_document',
+                'message' => 'I tried to generate the ' . str_replace('_', ' ', $type) . ', but the workflow failed: ' . ($failedStep['message'] ?? 'Unknown error.'),
+                'tokens_used' => 0,
+                'model' => null,
+                'document_updated' => false,
+                'target_section' => null,
+                'edit_type' => 'generate_' . $type . '_document',
+            ];
+        }
+
+        if (blank($fresh->content ?? '')) {
+            return [
+                'action' => 'generate_document',
+                'message' => 'The ' . str_replace('_', ' ', $type) . ' generation finished, but no document content was saved to the preview. Please try again or check the section generation logs.',
+                'tokens_used' => 0,
+                'model' => null,
+                'document_updated' => false,
+                'target_section' => null,
+                'edit_type' => 'generate_' . $type . '_document',
+            ];
+        }
+
+        return [
+            'action' => 'generate_document',
+            'message' => 'Done. I generated the ' . ($type === 'proposal' ? 'research proposal' : 'thesis document') . ' and updated the document preview on the right.',
+            'tokens_used' => 0,
+            'model' => null,
+            'document_updated' => true,
+            'target_section' => $type === 'proposal' ? 'Full Research Proposal' : 'Full Thesis Document',
+            'edit_type' => 'generate_' . $type . '_document',
+            'steps' => $steps,
+        ];
     }
 
     protected function handleGeneralChatWithHistory(NuruxploreProject $project, int $historyLimit = 20): array
@@ -673,6 +771,10 @@ EOT;
         $project = $project->fresh(['sections.children', 'sources', 'messages']);
         $document = trim((string) ($project->content ?? ''));
         $operation = $intent['operation'] ?? $intent['edit_type'] ?? 'rewrite_section';
+
+        if (in_array($operation, ['generate_proposal_document', 'generate_thesis_document', 'regenerate_document'], true)) {
+            return $this->handleWorkspaceDocumentGeneration($project, $userMessage, $historyLimit);
+        }
 
         if ($document === '') {
             return [
@@ -1242,6 +1344,9 @@ EOT;
     protected function workspaceOperationPatterns(): array
     {
         return [
+            'generate_proposal_document' => ['/\b(generate|create|write|draft|compose|regenerate|recreate|build).*\b(research\s+proposal|proposal)\b/'],
+            'generate_thesis_document' => ['/\b(generate|create|write|draft|compose|regenerate|recreate|build).*\b(full\s+thesis|thesis|dissertation)\b/'],
+            'regenerate_document' => ['/\b(regenerate|recreate|rewrite|build).*\b(full\s+document|whole\s+document|entire\s+document)\b/'],
             'generate_references' => ['/\b(reference|references|bibliography|apa\s*7|apa7|reference list)\b/'],
             'add_in_text_citations' => ['/\b(add|insert|include|fix).*\b(in[- ]?text citation|citation|citations)\b/'],
             'citation_gap_review' => ['/\b(citation gap|missing citation|needs citation|where.*citation)\b/'],
@@ -1281,6 +1386,8 @@ EOT;
     {
         $msg = strtolower($message);
         return match (true) {
+            (str_contains($msg, 'proposal') && (str_contains($msg, 'generate') || str_contains($msg, 'write') || str_contains($msg, 'create') || str_contains($msg, 'draft'))) => 'generate_proposal_document',
+            ((str_contains($msg, 'thesis') || str_contains($msg, 'dissertation')) && (str_contains($msg, 'generate') || str_contains($msg, 'write') || str_contains($msg, 'create') || str_contains($msg, 'draft'))) => 'generate_thesis_document',
             str_contains($msg, 'expand') || str_contains($msg, 'elaborate') || str_contains($msg, 'longer') => 'expand_section',
             str_contains($msg, 'shorten') || str_contains($msg, 'collapse') || str_contains($msg, 'summarize') => 'shorten_section',
             str_contains($msg, 'human') || str_contains($msg, 'natural') || str_contains($msg, 'less ai') => 'humanize_section',
@@ -1297,7 +1404,8 @@ EOT;
             'chat_only', 'quality_review', 'grammar_review', 'academic_quality_review', 'plagiarism_risk_review',
             'consistency_check', 'citation_gap_review', 'cleanup_document', 'fix_truncation', 'fix_placeholder_text',
             'fix_duplicate_headings', 'fix_heading_numbering', 'generate_references', 'format_references',
-            'expand_references', 'repair_references_section', 'fix_citation_style'
+            'expand_references', 'repair_references_section', 'fix_citation_style',
+            'generate_proposal_document', 'generate_thesis_document', 'regenerate_document'
         ], true);
     }
 

@@ -37,3 +37,8 @@ php artisan migrate
 
 # Start development server
 php artisan serve
+
+cd /var/www/nuruxplore
+sudo git pull
+sudo -u www-data php artisan optimize
+sudo systemctl restart php8.3-fpm
