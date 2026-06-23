@@ -12,7 +12,7 @@ class DocumentExtractionService
     public function extractAndSave(NuruxploreSource $source): NuruxploreSource
     {
         if (!$source->file_path || !Storage::disk('public')->exists($source->file_path)) {
-            $source->markExtraction('failed', 'File not found.');
+            $this->markExtraction($source, 'failed', 'File not found.');
             return $source->fresh();
         }
 
@@ -32,7 +32,7 @@ class DocumentExtractionService
             $text = $this->cleanText($text);
 
             if ($text === '') {
-                $source->markExtraction('failed', 'No readable text extracted. Use PDF, DOCX, TXT, CSV, or XLSX.');
+                $this->markExtraction($source, 'failed', 'No readable text extracted. Use PDF, DOCX, TXT, CSV, or XLSX.');
                 return $source->fresh();
             }
 
@@ -55,30 +55,66 @@ class DocumentExtractionService
                 'message' => $e->getMessage(),
             ]);
 
-            $source->markExtraction('failed', $e->getMessage());
+            $this->markExtraction($source, 'failed', $e->getMessage());
             return $source->fresh();
         }
     }
 
     protected function extractPdf(string $path, NuruxploreSource $source): string
     {
-        if (class_exists(\Smalot\PdfParser\Parser::class)) {
-            $parser = new \Smalot\PdfParser\Parser();
-            return $parser->parseFile($path)->getText();
-        }
-
+        // Preferred on Ubuntu servers: poppler-utils. This avoids fragile Spatie object
+        // initialization and works well for proposal PDFs.
         $pdftotext = trim((string) shell_exec('command -v pdftotext 2>/dev/null'));
         if ($pdftotext !== '') {
             $output = tempnam(sys_get_temp_dir(), 'nuru_pdf_');
-            @shell_exec(escapeshellcmd($pdftotext) . ' -layout ' . escapeshellarg($path) . ' ' . escapeshellarg($output) . ' 2>/dev/null');
+            @shell_exec(escapeshellcmd($pdftotext) . ' -layout -enc UTF-8 ' . escapeshellarg($path) . ' ' . escapeshellarg($output) . ' 2>/dev/null');
             $text = is_file($output) ? (file_get_contents($output) ?: '') : '';
             @unlink($output);
-            return $text;
+            if (trim($text) !== '') {
+                return $text;
+            }
         }
 
-        if (class_exists(\App\Services\PDFExtractionService::class)) {
-            app(\App\Services\PDFExtractionService::class)->extractAndSave($source);
-            return (string) $source->fresh()->extracted_text;
+        if (class_exists(\Smalot\PdfParser\Parser::class)) {
+            try {
+                $parser = new \Smalot\PdfParser\Parser();
+                $text = $parser->parseFile($path)->getText();
+                if (trim((string) $text) !== '') {
+                    return (string) $text;
+                }
+            } catch (\Throwable $e) {
+                Log::warning('Smalot PDF extraction failed; trying fallback', [
+                    'source_id' => $source->id,
+                    'message' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        // Optional fallback only. Use Spatie correctly so `$pdf` is initialized before text().
+        if (class_exists(\Spatie\PdfToText\Pdf::class)) {
+            try {
+                if (method_exists(\Spatie\PdfToText\Pdf::class, 'getText')) {
+                    $text = \Spatie\PdfToText\Pdf::getText($path);
+                    if (trim((string) $text) !== '') {
+                        return (string) $text;
+                    }
+                }
+
+                if ($pdftotext !== '') {
+                    $pdf = new \Spatie\PdfToText\Pdf($pdftotext);
+                    if (method_exists($pdf, 'setPdf')) {
+                        $text = $pdf->setPdf($path)->text();
+                        if (trim((string) $text) !== '') {
+                            return (string) $text;
+                        }
+                    }
+                }
+            } catch (\Throwable $e) {
+                Log::warning('Spatie PDF extraction failed; no readable PDF text returned', [
+                    'source_id' => $source->id,
+                    'message' => $e->getMessage(),
+                ]);
+            }
         }
 
         return '';
@@ -159,6 +195,22 @@ class DocumentExtractionService
 
         $zip->close();
         return $text;
+    }
+
+    protected function markExtraction(NuruxploreSource $source, string $status, ?string $message = null, array $extra = []): void
+    {
+        if (method_exists($source, 'markExtraction')) {
+            $source->markExtraction($status, $message, $extra);
+            return;
+        }
+
+        $metadata = $source->metadata ?? [];
+        $metadata['extraction_status'] = $status;
+        if ($message !== null) {
+            $metadata['extraction_message'] = $message;
+        }
+        $metadata = array_merge($metadata, $extra);
+        $source->forceFill(['metadata' => $metadata])->save();
     }
 
     protected function cleanText(string $text): string

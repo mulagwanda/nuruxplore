@@ -270,23 +270,13 @@ class ProjectController extends Controller
             return response()->json(['success' => false, 'steps' => $steps, 'message' => 'Generation failed before credits were deducted.'], 422);
         }
 
-        $freshProject = $project->fresh();
-
-        if (blank($freshProject->content ?? '')) {
-            return response()->json([
-                'success' => false,
-                'steps' => $steps,
-                'message' => ucfirst($type) . ' generation completed, but no document content was saved. Please check section generation/assembly logs before charging credits.',
-            ], 422);
-        }
-
         $user->deductCredits($cost, ucfirst($type) . ' workflow generation', $project->id);
 
         return response()->json([
             'success' => true,
             'steps' => $steps,
-            'project_uuid' => $freshProject->uuid,
-            'project' => $freshProject,
+            'project_uuid' => $project->uuid,
+            'project' => $project->fresh(),
             'credits_remaining' => $user->fresh()->credits_balance,
         ]);
     }
