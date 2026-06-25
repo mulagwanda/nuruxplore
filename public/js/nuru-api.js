@@ -181,6 +181,10 @@ class NuruAPI {
         });
     }
 
+    async getGenerationStatus(projectUuid) {
+        return this.request(`/projects/${projectUuid}/generation-status`);
+    }
+
     /* ============================================
        Research Profile Workflow
        ============================================ */

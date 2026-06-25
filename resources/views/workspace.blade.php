@@ -160,6 +160,10 @@
                 chatOpen: false,
                 isMobile: window.innerWidth <= 768,
                 darkMode: localStorage.getItem('nuruxplore_theme') === 'dark',
+                generationStatus: null,
+                generationProgress: 0,
+                generationCurrentStep: '',
+                generationPollTimer: null,
 
                 get documentLabel() {
                     if (this.projectType === 'proposal') return 'Research Proposal';
@@ -194,6 +198,12 @@
                         this.citationStyle = pr.project?.citation_style || 'APA 7';
                         this.wordCount = pr.project?.word_count || 0;
                         this.projectContent = pr.project?.content || '';
+                        this.generationStatus = pr.project?.generation_status || pr.project?.status || null;
+                        this.generationProgress = pr.project?.generation_progress || 0;
+                        this.generationCurrentStep = pr.project?.generation_current_step || '';
+                        if (['queued','building_profile','generating_outline','generating_sections','assembling','processing'].includes(this.generationStatus)) {
+                            this.startGenerationPolling();
+                        }
                         this.credits = cr.balance || 0;
                         document.title = this.projectTitle + ' · NuruXplore';
                         
@@ -228,7 +238,12 @@
                         this.isPreviewLoading = true;
                         const data = await window.NuruAPI.sendMessage(this.projectUUID, msg, 'chat');
                         
-                        if (data.action === 'edit') {
+                        if (data.created_project && data.workspace_url) {
+                            this.messages.push({ id: Date.now(), role: 'ai', content: (data.message || 'Project created.') + '
+
+Open: ' + data.workspace_url, isAction: true });
+                            window.location.href = data.workspace_url;
+                        } else if (data.action === 'edit' || data.document_updated || data.action === 'edit_title') {
                             this.messages.push({ 
                                 id: Date.now(), 
                                 role: 'ai', 
@@ -264,9 +279,48 @@
                             this.projectType = pr.project.type || 'thesis';
                             this.wordCount = pr.project.word_count || 0;
                             this.projectContent = pr.project.content || '';
+                            this.generationStatus = pr.project.generation_status || pr.project.status || null;
+                            this.generationProgress = pr.project.generation_progress || 0;
+                            this.generationCurrentStep = pr.project.generation_current_step || '';
                             document.title = this.projectTitle + ' · NuruXplore';
                         }
                     } catch (e) { console.error('Reload error:', e); }
+                },
+
+                startGenerationPolling() {
+                    if (this.generationPollTimer) return;
+                    this.generationPollTimer = setInterval(() => this.pollGenerationStatus(), 5000);
+                    this.pollGenerationStatus();
+                },
+
+                async pollGenerationStatus() {
+                    try {
+                        const status = await window.NuruAPI.getGenerationStatus(this.projectUUID);
+                        this.generationStatus = status.status;
+                        this.generationProgress = status.progress || 0;
+                        this.generationCurrentStep = status.current_step || '';
+
+                        if (!this.projectContent && status.status !== 'completed') {
+                            this.projectContent = `*${status.progress || 0}% · ${status.current_step || 'Generating document...'}*`;
+                        }
+
+                        if (status.status === 'completed' || status.content_ready) {
+                            clearInterval(this.generationPollTimer);
+                            this.generationPollTimer = null;
+                            await this.reloadProject();
+                            this.messages.push({ id: Date.now(), role: 'ai', content: '✅ Document generation completed. The preview has been updated.', isAction: true });
+                            this.scrollChat();
+                        }
+
+                        if (status.status === 'failed') {
+                            clearInterval(this.generationPollTimer);
+                            this.generationPollTimer = null;
+                            this.messages.push({ id: Date.now(), role: 'ai', content: '❌ Generation failed: ' + (status.error || 'Unknown error. Credits were refunded.'), isAction: true });
+                            this.scrollChat();
+                        }
+                    } catch (e) {
+                        console.error('Generation status error:', e);
+                    }
                 },
 
                 renderChatMarkdown(c) {

@@ -6,8 +6,10 @@ use App\Http\Controllers\Controller;
 use App\Models\NuruxploreProject;
 use App\Models\NuruxploreSection;
 use App\Models\NuruxploreVersion;
+use App\Jobs\GenerateResearchDocumentJob;
 use App\Services\GroqAIService;
 use App\Services\NuruAIService;
+use App\Services\NuruCreditService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -16,7 +18,8 @@ class ProjectController extends Controller
 {
     public function __construct(
         protected GroqAIService $aiService,
-        protected NuruAIService $nuruAI
+        protected NuruAIService $nuruAI,
+        protected NuruCreditService $credits
     ) {}
 
     public function index(): JsonResponse
@@ -30,6 +33,9 @@ class ProjectController extends Controller
                 'title' => $project->title,
                 'type' => $project->type,
                 'status' => $project->status,
+                'generation_status' => $project->generation_status,
+                'generation_progress' => $project->generation_progress ?? 0,
+                'generation_current_step' => $project->generation_current_step,
                 'word_count' => $project->word_count,
                 'citation_style' => $project->citation_style,
                 'research_profile_status' => $project->research_profile_status ?? 'missing',
@@ -45,22 +51,43 @@ class ProjectController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'title' => 'required|string|max:255',
+            'title' => 'required|string|max:2000',
             'type' => 'required|in:thesis,dissertation,literature_review,lab_report,case_study,capstone,chat,proposal',
             'citation_style' => 'nullable|in:APA7,MLA,Chicago,IEEE',
             'description' => 'nullable|string|max:2000',
             'research_question' => 'nullable|string|max:2000',
+            'auto_title' => 'nullable|boolean',
         ]);
+
+        $type = $validated['type'];
+        $rawPrompt = trim($validated['title']);
+        $shouldGenerateTitle = ($validated['auto_title'] ?? true) && in_array($type, ['proposal', 'thesis', 'dissertation'], true);
+
+        $titleResult = $shouldGenerateTitle
+            ? $this->nuruAI->generateAcademicTitleFromPrompt($rawPrompt, $type)
+            : ['success' => true, 'title' => $rawPrompt, 'tokens_used' => 0];
+
+        $title = trim((string) ($titleResult['title'] ?? $rawPrompt));
+        if ($title === '') {
+            $title = Str::limit($rawPrompt, 180, '');
+        }
 
         $project = $request->user()->projects()->create([
             'uuid' => (string) Str::uuid(),
-            'title' => $validated['title'],
-            'type' => $validated['type'],
+            'title' => $title,
+            'title_ai_generated' => $shouldGenerateTitle && $title !== $rawPrompt,
+            'type' => $type,
             'citation_style' => $validated['citation_style'] ?? 'APA7',
-            'description' => $validated['description'] ?? null,
+            'description' => $validated['description'] ?? $rawPrompt,
+            'original_prompt' => $rawPrompt,
             'research_question' => $validated['research_question'] ?? null,
             'research_profile_status' => 'missing',
             'status' => 'draft',
+            'generation_settings' => [
+                'original_prompt' => $rawPrompt,
+                'title_generated_at' => $shouldGenerateTitle ? now()->toISOString() : null,
+                'title_tokens_used' => $titleResult['tokens_used'] ?? 0,
+            ],
             'last_edited_at' => now(),
         ]);
 
@@ -68,16 +95,18 @@ class ProjectController extends Controller
             'project_id' => $project->id,
             'user_id' => $request->user()->id,
             'version_number' => 1,
-            'snapshot' => ['content' => null, 'word_count' => 0],
-            'changes_description' => 'Project created',
+            'snapshot' => ['content' => null, 'word_count' => 0, 'title' => $project->title],
+            'changes_description' => $shouldGenerateTitle ? 'Project created with AI-generated academic title' : 'Project created',
             'change_type' => 'manual',
         ]);
 
         return response()->json([
-            'project' => $project,
+            'project' => $project->fresh(),
             'id' => $project->id,
             'uuid' => $project->uuid,
             'title' => $project->title,
+            'original_prompt' => $rawPrompt,
+            'title_ai_generated' => $project->title_ai_generated,
             'message' => 'Project created successfully',
         ], 201);
     }
@@ -99,6 +128,11 @@ class ProjectController extends Controller
                 'research_profile_status' => $project->research_profile_status ?? 'missing',
                 'research_profile_approved_at' => $project->research_profile_approved_at,
                 'generation_settings' => $project->generation_settings,
+                'generation_status' => $project->generation_status,
+                'generation_progress' => $project->generation_progress ?? 0,
+                'generation_current_step' => $project->generation_current_step,
+                'generation_steps' => $project->generation_steps,
+                'generation_error' => $project->generation_error,
                 'word_count' => $project->word_count,
                 'status' => $project->status,
                 'content' => $project->content,
@@ -256,28 +290,106 @@ class ProjectController extends Controller
     public function generateComplete(Request $request, NuruxploreProject $project): JsonResponse
     {
         $this->authorizeOwner($project, $request);
+
         $user = $request->user();
         $type = $request->input('type', $project->type ?: 'thesis');
-        $cost = $type === 'proposal' ? 15 : 25;
+        $topic = $request->input('topic', $project->original_prompt ?: $project->title);
+        $cost = $this->credits->cost('generate_document', $type, $project);
 
-        if ($user->credits_balance < $cost) {
-            return response()->json(['message' => "Insufficient credits. Need {$cost} credits.", 'credits_balance' => $user->credits_balance], 402);
+        if (!$this->credits->canAfford($user, $cost)) {
+            return response()->json([
+                'message' => "Insufficient credits. Need {$cost} credits.",
+                'credits_balance' => $user->credits_balance,
+                'required_credits' => $cost,
+                'credit_usd_value' => NuruCreditService::CREDIT_USD_VALUE,
+            ], 402);
         }
 
-        $steps = $this->nuruAI->generateCompleteThesis($project, $request->input('topic', $project->title), $type);
-        $failed = collect($steps)->contains(fn($step) => ($step['status'] ?? null) === 'failed');
-        if ($failed) {
-            return response()->json(['success' => false, 'steps' => $steps, 'message' => 'Generation failed before credits were deducted.'], 422);
+        // Optional emergency sync mode for local debugging only. The production default is queued.
+        if ($request->boolean('sync')) {
+            $steps = $this->nuruAI->generateCompleteThesis($project, $topic, $type);
+            $failed = collect($steps)->contains(fn($step) => ($step['status'] ?? null) === 'failed');
+            if ($failed) {
+                return response()->json(['success' => false, 'steps' => $steps, 'message' => 'Generation failed before credits were deducted.'], 422);
+            }
+
+            $this->credits->charge($user, $cost, ucfirst($type) . ' workflow generation', $project->id);
+
+            return response()->json([
+                'success' => true,
+                'queued' => false,
+                'steps' => $steps,
+                'project_uuid' => $project->uuid,
+                'project' => $project->fresh(),
+                'credits_remaining' => $user->fresh()->credits_balance,
+            ]);
         }
 
-        $user->deductCredits($cost, ucfirst($type) . ' workflow generation', $project->id);
+        $jobUuid = (string) Str::uuid();
+        $this->credits->charge($user, $cost, ucfirst($type) . ' queued generation', $project->id);
+
+        $project->update([
+            'type' => $type,
+            'original_prompt' => $project->original_prompt ?: $topic,
+            'generation_status' => 'queued',
+            'generation_progress' => 1,
+            'generation_current_step' => 'Generation queued',
+            'generation_steps' => [[
+                'step' => 'queued',
+                'status' => 'processing',
+                'message' => 'Generation queued...',
+            ]],
+            'generation_error' => null,
+            'generation_job_uuid' => $jobUuid,
+            'generation_started_at' => now(),
+            'generation_finished_at' => null,
+            'credits_reserved' => $cost,
+            'status' => 'queued',
+            'last_edited_at' => now(),
+        ]);
+
+        GenerateResearchDocumentJob::dispatch($project->id, $user->id, $topic, $type, $cost, $jobUuid);
 
         return response()->json([
             'success' => true,
-            'steps' => $steps,
+            'queued' => true,
+            'status' => 'queued',
+            'message' => ucfirst($type) . ' generation started.',
             'project_uuid' => $project->uuid,
-            'project' => $project->fresh(),
+            'job_uuid' => $jobUuid,
+            'required_credits' => $cost,
             'credits_remaining' => $user->fresh()->credits_balance,
+            'project' => $project->fresh(),
+        ], 202);
+    }
+
+    public function generationStatus(Request $request, NuruxploreProject $project): JsonResponse
+    {
+        $this->authorizeOwner($project, $request);
+        $project = $project->fresh();
+
+        return response()->json([
+            'success' => true,
+            'project_uuid' => $project->uuid,
+            'status' => $project->generation_status ?: $project->status,
+            'progress' => (int) ($project->generation_progress ?? 0),
+            'current_step' => $project->generation_current_step,
+            'steps' => $project->generation_steps ?? [],
+            'error' => $project->generation_error,
+            'content_ready' => filled($project->content),
+            'word_count' => $project->word_count,
+            'credits_reserved' => $project->credits_reserved ?? 0,
+            'started_at' => $project->generation_started_at,
+            'finished_at' => $project->generation_finished_at,
+            'project' => [
+                'id' => $project->id,
+                'uuid' => $project->uuid,
+                'title' => $project->title,
+                'type' => $project->type,
+                'status' => $project->status,
+                'content' => $project->content,
+                'word_count' => $project->word_count,
+            ],
         ]);
     }
 

@@ -511,25 +511,33 @@
                 async createProjectWithAI() {
                     const topic = this.newProjectTitle.trim();
                     if (!topic || this.isGenerating) return;
-                    
-                    this.isGenerating = true; this.generationComplete = false; this.generationSteps = [];
-                    
+
+                    this.isGenerating = true;
+                    this.generationComplete = false;
+                    this.generationSteps = [];
+
                     const type = this.researchType === 'proposal' ? 'proposal' : 'thesis';
-                    const cost = this.researchType === 'proposal' ? 15 : 25;
-                    
+                    const expectedCost = this.researchType === 'proposal' ? 100 : (this.uploadedFile ? 600 : 400);
+
                     try {
-                        this.generationSteps.push({step:'create',status:'processing',message:'📁 Creating project...'});
-                        const project = await window.NuruAPI.createProject({title:topic, type:type, citation_style:'APA7'});
-                        this.generationSteps[0].status='completed'; this.generationSteps[0].message='✅ Project created';
+                        this.generationSteps.push({step:'create',status:'processing',message:'📁 Creating project and improving title...'});
+                        const project = await window.NuruAPI.createProject({
+                            title: topic,
+                            type: type,
+                            citation_style: 'APA7',
+                            auto_title: true
+                        });
+                        this.generationSteps[0].status='completed';
+                        this.generationSteps[0].message='✅ Project created: ' + (project.title || 'Untitled');
                         this.generatedProjectUUID = project.uuid;
-                        
-                        // Upload file if present
+
                         if (this.uploadedFile) {
-                            this.generationSteps.push({step:'upload',status:'processing',message:'📁 Uploading your document...'});
+                            this.generationSteps.push({step:'upload',status:'processing',message:'📁 Uploading and extracting your document...'});
                             const formData = new FormData();
                             formData.append('project_id', project.id);
                             formData.append('file', this.uploadedFile);
-                            
+                            formData.append('document_role', 'proposal_or_data');
+
                             await fetch('/api/sources/upload', {
                                 method: 'POST',
                                 headers: { 'Authorization': `Bearer ${localStorage.getItem('nuruxplore_token')}` },
@@ -538,38 +546,74 @@
                             this.generationSteps[this.generationSteps.length-1].status = 'completed';
                             this.generationSteps[this.generationSteps.length-1].message = '✅ Document uploaded';
                         }
-                        
-                        // Generate
-                        this.generationSteps.push({step:'generate',status:'processing',message:'🤖 AI generating...'});
-                        const result = await fetch(`/api/projects/${this.generatedProjectUUID}/generate-complete`,{
-                            method:'POST',
-                            headers:{
-                                'Authorization':`Bearer ${localStorage.getItem('nuruxplore_token')}`,
-                                'Content-Type':'application/json',
-                                'Accept':'application/json'
-                            },
-                            body:JSON.stringify({topic, type:type})
-                        });
-                        
-                        const data = await result.json();
-                        if(result.ok&&data.steps){
-                            this.generationSteps=data.steps;
-                            this.generationComplete=true;
-                            this.credits=data.credits_remaining;
-                            setTimeout(()=>{window.location.href='/workspace/'+this.generatedProjectUUID;},2000);
-                        } else {
-                            this.generationSteps.push({step:'error',status:'completed',message:'❌ '+(data.message||'Generation failed.')});
+
+                        this.generationSteps.push({step:'queued',status:'processing',message:`🤖 Starting AI generation (${expectedCost} credits)...`});
+                        const started = await window.NuruAPI.generateComplete(this.generatedProjectUUID, topic, type);
+
+                        if (!started.success) {
+                            this.generationSteps.push({step:'error',status:'failed',message:'❌ '+(started.message||'Generation failed.')});
+                            return;
                         }
+
+                        this.credits = started.credits_remaining ?? this.credits;
+                        this.generationSteps = started.project?.generation_steps || [{step:'queued',status:'processing',message:'Generation queued...'}];
+                        await this.pollGenerationStatus(this.generatedProjectUUID);
                     } catch(e) {
-                        this.generationSteps.push({step:'error',status:'completed',message:'❌ '+e.message});
+                        this.generationSteps.push({step:'error',status:'failed',message:'❌ '+e.message});
                     }
-                    
+
                     this.isGenerating=false;
                     this.uploadedFile = null;
                     this.uploadedFileName = '';
                     await this.loadProjects();
                 },
-                
+
+                async pollGenerationStatus(uuid) {
+                    let attempts = 0;
+                    const maxAttempts = 360; // 30 minutes at 5 seconds
+
+                    while (attempts < maxAttempts) {
+                        attempts++;
+                        await new Promise(resolve => setTimeout(resolve, 5000));
+
+                        try {
+                            const status = await window.NuruAPI.getGenerationStatus(uuid);
+                            if (status.steps && status.steps.length) {
+                                this.generationSteps = status.steps;
+                            } else {
+                                this.generationSteps = [{
+                                    step: status.status || 'generating',
+                                    status: 'processing',
+                                    message: `${status.progress || 0}% · ${status.current_step || 'Generating...'}`
+                                }];
+                            }
+
+                            if (status.current_step) {
+                                const last = this.generationSteps[this.generationSteps.length - 1];
+                                if (!last || last.message !== status.current_step) {
+                                    this.generationSteps.push({step: status.status, status:'processing', message:`${status.progress || 0}% · ${status.current_step}`});
+                                }
+                            }
+
+                            if (status.status === 'completed' || status.progress >= 100 && status.content_ready) {
+                                this.generationComplete = true;
+                                this.generationSteps.push({step:'done',status:'completed',message:'✅ Document ready. Opening workspace...'});
+                                setTimeout(()=>{window.location.href='/workspace/'+uuid;},1500);
+                                return;
+                            }
+
+                            if (status.status === 'failed') {
+                                this.generationSteps.push({step:'failed',status:'failed',message:'❌ '+(status.error || 'Generation failed. Credits were refunded.')});
+                                return;
+                            }
+                        } catch (e) {
+                            this.generationSteps.push({step:'poll_error',status:'processing',message:'Waiting for generation status...'});
+                        }
+                    }
+
+                    this.generationSteps.push({step:'timeout',status:'processing',message:'Generation is still running. You can open the workspace later to check progress.'});
+                },
+
                 async deleteProject(uuid) { if(!confirm('Delete?'))return; try{await window.NuruAPI.deleteProject(uuid);await this.loadProjects();}catch(e){} },
                 async deleteSource(id) { if(!confirm('Delete?'))return; try{await window.NuruAPI.deleteSource(id);await this.loadAllSources();}catch(e){} },
                 

@@ -31,6 +31,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/projects/{project:uuid}/approve-research-profile', [ProjectController::class, 'approveResearchProfile']);
     Route::post('/projects/{project:uuid}/generate-outline', [ProjectController::class, 'generateOutline']);
     Route::post('/projects/{project:uuid}/generate-complete', [ProjectController::class, 'generateComplete']);
+    Route::get('/projects/{project:uuid}/generation-status', [ProjectController::class, 'generationStatus']);
     Route::post('/projects/{project:uuid}/assemble-document', [ProjectController::class, 'assembleDocument']);
     Route::post('/projects/{project:uuid}/consistency-check', [ProjectController::class, 'consistencyCheck']);
 

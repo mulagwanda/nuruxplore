@@ -8,18 +8,11 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class NuruxploreMessage extends Model
 {
     protected $fillable = [
-        'project_id',
-        'user_id',
-        'role',
-        'content',
-        'metadata',
-        'action_type',
-        'credits_used',
+        'project_id', 'user_id', 'role', 'content', 'metadata', 'action_type', 'credits_used',
     ];
 
     protected $casts = [
         'metadata' => 'array',
-        'credits_used' => 'integer',
     ];
 
     public function project(): BelongsTo
