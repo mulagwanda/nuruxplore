@@ -103,6 +103,15 @@
         .upload-zone.has-file { border-color: #22c55e; border-style: solid; background: rgba(34,197,94,0.03); }
         .upload-zone .icon { font-size: 40px; margin-bottom: 8px; }
         .upload-zone p { color: var(--dash-text-muted); font-size: 13px; margin: 0; }
+        .upload-file-list { margin-top: 12px; display: grid; gap: 8px; }
+        .upload-file-item { display: grid; grid-template-columns: 1fr 150px 32px; gap: 8px; align-items: center; background: var(--dash-surface); border: 1px solid var(--dash-border); border-radius: 12px; padding: 10px 12px; text-align: left; }
+        .upload-file-name { font-size: 13px; font-weight: 600; color: var(--dash-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .upload-file-meta { font-size: 11px; color: var(--dash-text-muted); margin-top: 2px; }
+        .upload-role-select { width: 100%; border: 1px solid var(--dash-border); background: var(--dash-surface); color: var(--dash-text); border-radius: 8px; padding: 7px 8px; font-size: 12px; }
+        .upload-remove-btn { border: 0; background: var(--dash-hover); color: var(--dash-text-secondary); border-radius: 8px; height: 30px; cursor: pointer; }
+        .upload-remove-btn:hover { color: #ef4444; }
+        .mode-note { margin-top: 12px; font-size: 12px; color: var(--dash-text-muted); line-height: 1.5; }
+        @media (max-width: 640px) { .upload-file-item { grid-template-columns: 1fr; } }
     </style>
 </head>
 <body class="dash-body" x-data="dashboardApp()" x-init="init()" :class="{ 'dark-mode': darkMode }">
@@ -246,21 +255,44 @@
                                 </div>
                             </div>
                             
-                            <!-- File Upload (only for Thesis) -->
+                            <!-- Multi-file Upload (Thesis mode) -->
                             <div x-show="researchType === 'thesis'" style="margin-top:16px;">
-                                <div class="upload-zone" 
-                                     :class="{ 'has-file': uploadedFile }"
+                                <div class="upload-zone"
+                                     :class="{ 'has-file': uploadedFiles.length > 0 }"
                                      @click="document.getElementById('fileUpload').click()"
                                      @dragover.prevent @drop.prevent="handleDrop($event)">
-                                    <div class="icon" x-text="uploadedFile ? '✅' : '📁'"></div>
-                                    <p x-show="!uploadedFile">Upload your research proposal or collected data (PDF)</p>
-                                    <p x-show="uploadedFile" style="color:#22c55e;">
-                                        <strong x-text="uploadedFileName"></strong> ready!
+                                    <div class="icon" x-text="uploadedFiles.length ? '✅' : '📁'"></div>
+                                    <p x-show="uploadedFiles.length === 0">Upload proposal, collected data, or supporting files</p>
+                                    <p x-show="uploadedFiles.length > 0" style="color:#22c55e;">
+                                        <strong x-text="uploadedFiles.length + ' file(s) ready'"></strong>
                                     </p>
                                     <p style="font-size:11px;color:var(--dash-text-muted);margin-top:4px;">
-                                        AI will use your uploaded data to generate the thesis
+                                        PDF, DOCX, TXT, CSV, XLSX · choose a role for each file
                                     </p>
-                                    <input type="file" id="fileUpload" @change="handleFileUpload($event)" accept=".pdf,.doc,.docx" style="display:none;">
+                                    <input type="file" id="fileUpload" multiple @change="handleFileUpload($event)" accept=".pdf,.doc,.docx,.txt,.md,.csv,.xlsx" style="display:none;">
+                                </div>
+
+                                <div class="upload-file-list" x-show="uploadedFiles.length > 0">
+                                    <template x-for="(item, index) in uploadedFiles" :key="item.key">
+                                        <div class="upload-file-item">
+                                            <div>
+                                                <div class="upload-file-name" x-text="item.file.name"></div>
+                                                <div class="upload-file-meta" x-text="formatFileSize(item.file.size)"></div>
+                                            </div>
+                                            <select class="upload-role-select" x-model="item.role" @click.stop>
+                                                <option value="proposal">Proposal / Research Plan</option>
+                                                <option value="dataset">Collected Data</option>
+                                                <option value="literature_source">Literature Source</option>
+                                                <option value="reference_source">Reference List</option>
+                                                <option value="supervisor_comments">Supervisor Comments</option>
+                                                <option value="other">Other</option>
+                                            </select>
+                                            <button type="button" class="upload-remove-btn" @click.stop="removeUploadedFile(index)">×</button>
+                                        </div>
+                                    </template>
+                                </div>
+                                <div class="mode-note">
+                                    Tip: upload <strong>proposal.pdf</strong> as Proposal and <strong>field_data.csv/xlsx</strong> as Collected Data. Thesis findings will use uploaded data only when available.
                                 </div>
                             </div>
                             
@@ -268,7 +300,7 @@
                             <div style="margin-top:16px;">
                                 <div style="display:flex;align-items:center;justify-content:center;gap:12px;">
                                     <span style="font-size:11px;color:var(--dash-text-muted);">
-                                        <span x-text="researchType === 'proposal' ? '15 credits' : '25 credits'"></span>
+                                        <span x-text="researchType === 'proposal' ? '100 credits' : (hasDatasetUpload ? '600 credits' : '400 credits')"></span>
                                     </span>
                                     <span style="font-size:12px;color:var(--dash-text-secondary);">
                                         <span x-text="researchType === 'proposal' ? 'Research Proposal' : 'Thesis'"></span> · APA 7
@@ -412,8 +444,7 @@
                 researchType: 'thesis',  // 'proposal' or 'thesis'
                 
                 // File Upload
-                uploadedFile: null,
-                uploadedFileName: '',
+                uploadedFiles: [],
                 
                 // Project creation
                 isTyping: false, isGenerating: false, generationComplete: false,
@@ -458,6 +489,10 @@
                     const q = this.sourceSearch.toLowerCase();
                     return this.allSources.filter(s => (s.title||'').toLowerCase().includes(q) || (s.author||'').toLowerCase().includes(q));
                 },
+
+                get hasDatasetUpload() {
+                    return this.uploadedFiles.some(item => item.role === 'dataset' || item.file.name.toLowerCase().match(/\.(csv|xlsx)$/));
+                },
                 
                 async init() {
                     if (this.darkMode) document.documentElement.setAttribute('data-theme', 'dark');
@@ -493,19 +528,35 @@
                 },
                 
                 handleFileUpload(e) {
-                    const file = e.target.files[0];
-                    if (file) {
-                        this.uploadedFile = file;
-                        this.uploadedFileName = file.name;
-                    }
+                    this.addUploadedFiles(Array.from(e.target.files || []));
+                    e.target.value = '';
                 },
-                
+
                 handleDrop(e) {
-                    const file = e.dataTransfer.files[0];
-                    if (file && file.type === 'application/pdf') {
-                        this.uploadedFile = file;
-                        this.uploadedFileName = file.name;
-                    }
+                    this.addUploadedFiles(Array.from(e.dataTransfer.files || []));
+                },
+
+                addUploadedFiles(files) {
+                    files.forEach(file => {
+                        const ext = (file.name.split('.').pop() || '').toLowerCase();
+                        const role = ['csv', 'xlsx'].includes(ext) ? 'dataset' : (this.uploadedFiles.length === 0 ? 'proposal' : 'literature_source');
+                        this.uploadedFiles.push({
+                            key: Date.now() + '_' + Math.random().toString(16).slice(2),
+                            file,
+                            role,
+                        });
+                    });
+                },
+
+                removeUploadedFile(index) {
+                    this.uploadedFiles.splice(index, 1);
+                },
+
+                formatFileSize(bytes) {
+                    if (!bytes) return '0 KB';
+                    const kb = bytes / 1024;
+                    if (kb < 1024) return Math.round(kb) + ' KB';
+                    return (kb / 1024).toFixed(1) + ' MB';
                 },
                 
                 async createProjectWithAI() {
@@ -517,7 +568,7 @@
                     this.generationSteps = [];
 
                     const type = this.researchType === 'proposal' ? 'proposal' : 'thesis';
-                    const expectedCost = this.researchType === 'proposal' ? 100 : (this.uploadedFile ? 600 : 400);
+                    const expectedCost = this.researchType === 'proposal' ? 100 : (this.hasDatasetUpload ? 600 : 400);
 
                     try {
                         this.generationSteps.push({step:'create',status:'processing',message:'📁 Creating project and improving title...'});
@@ -531,20 +582,17 @@
                         this.generationSteps[0].message='✅ Project created: ' + (project.title || 'Untitled');
                         this.generatedProjectUUID = project.uuid;
 
-                        if (this.uploadedFile) {
-                            this.generationSteps.push({step:'upload',status:'processing',message:'📁 Uploading and extracting your document...'});
-                            const formData = new FormData();
-                            formData.append('project_id', project.id);
-                            formData.append('file', this.uploadedFile);
-                            formData.append('document_role', 'proposal_or_data');
-
-                            await fetch('/api/sources/upload', {
-                                method: 'POST',
-                                headers: { 'Authorization': `Bearer ${localStorage.getItem('nuruxplore_token')}` },
-                                body: formData,
-                            });
+                        if (this.uploadedFiles.length) {
+                            this.generationSteps.push({step:'upload',status:'processing',message:`📁 Uploading and extracting ${this.uploadedFiles.length} file(s)...`});
+                            for (const item of this.uploadedFiles) {
+                                await window.NuruAPI.uploadSource(project.uuid || project.id, item.file, {
+                                    title: item.file.name,
+                                    document_role: item.role,
+                                    type: item.role,
+                                });
+                            }
                             this.generationSteps[this.generationSteps.length-1].status = 'completed';
-                            this.generationSteps[this.generationSteps.length-1].message = '✅ Document uploaded';
+                            this.generationSteps[this.generationSteps.length-1].message = '✅ Files uploaded and extracted';
                         }
 
                         this.generationSteps.push({step:'queued',status:'processing',message:`🤖 Starting AI generation (${expectedCost} credits)...`});
@@ -563,8 +611,7 @@
                     }
 
                     this.isGenerating=false;
-                    this.uploadedFile = null;
-                    this.uploadedFileName = '';
+                    this.uploadedFiles = [];
                     await this.loadProjects();
                 },
 

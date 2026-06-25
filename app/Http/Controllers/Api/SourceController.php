@@ -37,7 +37,7 @@ class SourceController extends Controller
             'type' => 'required|in:book,journal,website,report,conference,thesis,proposal,dataset,template,supervisor_comments,other',
             'doi' => 'nullable|string|max:255',
             'url' => 'nullable|url|max:500',
-            'document_role' => 'nullable|in:proposal,dataset,reference,template,supervisor_comments,other',
+            'document_role' => 'nullable|in:proposal,dataset,collected_data,literature_source,reference,reference_source,template,supervisor_comments,other',
         ]);
 
         $source = $project->sources()->create([
@@ -58,18 +58,25 @@ class SourceController extends Controller
     public function upload(Request $request, DocumentExtractionService $extractor): JsonResponse
     {
         $validated = $request->validate([
-            'project_id' => 'required|exists:nuruxplore_projects,id',
+            'project_id' => 'nullable|exists:nuruxplore_projects,id',
+            'project_uuid' => 'nullable|exists:nuruxplore_projects,uuid',
             'file' => 'required|file|mimes:pdf,doc,docx,txt,md,csv,xlsx|max:20480',
             'title' => 'nullable|string|max:500',
-            'document_role' => 'nullable|in:proposal,dataset,reference,template,supervisor_comments,other',
+            'document_role' => 'nullable|in:proposal,dataset,collected_data,literature_source,reference,reference_source,template,supervisor_comments,other',
         ]);
 
-        $project = NuruxploreProject::findOrFail($validated['project_id']);
+        if (empty($validated['project_id']) && empty($validated['project_uuid'])) {
+            return response()->json(['message' => 'project_id or project_uuid is required.'], 422);
+        }
+
+        $project = !empty($validated['project_uuid'])
+            ? NuruxploreProject::where('uuid', $validated['project_uuid'])->firstOrFail()
+            : NuruxploreProject::findOrFail($validated['project_id']);
         $this->authorizeProject($project, $request);
 
         $file = $request->file('file');
         $extension = strtolower($file->getClientOriginalExtension());
-        $role = $validated['document_role'] ?? ($extension === 'csv' || $extension === 'xlsx' ? 'dataset' : 'proposal');
+        $role = $validated['document_role'] ?? (in_array($extension, ['csv', 'xlsx'], true) ? 'dataset' : 'proposal');
         $path = $file->store('sources/' . $request->user()->id, 'public');
 
         $source = $project->sources()->create([
@@ -83,6 +90,7 @@ class SourceController extends Controller
                 'original_name' => $file->getClientOriginalName(),
                 'mime_type' => $file->getMimeType(),
                 'file_extension' => $extension,
+                'is_dataset' => in_array($role, ['dataset', 'collected_data'], true) || in_array($extension, ['csv', 'xlsx'], true),
                 'file_size' => $file->getSize(),
                 'extraction_status' => 'pending',
             ],

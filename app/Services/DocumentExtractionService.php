@@ -36,16 +36,23 @@ class DocumentExtractionService
                 return $source->fresh();
             }
 
+            $metadata = array_merge($source->metadata ?? [], [
+                'file_extension' => $extension,
+                'extraction_status' => 'completed',
+                'extraction_message' => 'Text extracted successfully.',
+                'word_count' => str_word_count($text),
+                'character_count' => strlen($text),
+                'extracted_at' => now()->toISOString(),
+            ]);
+
+            if (in_array($extension, ['csv', 'xlsx'], true) || in_array(($metadata['document_role'] ?? ''), ['dataset', 'collected_data'], true)) {
+                $metadata = array_merge($metadata, $this->datasetMetadataFromExtractedText($text));
+                $metadata['is_dataset'] = true;
+            }
+
             $source->update([
                 'extracted_text' => $text,
-                'metadata' => array_merge($source->metadata ?? [], [
-                    'file_extension' => $extension,
-                    'extraction_status' => 'completed',
-                    'extraction_message' => 'Text extracted successfully.',
-                    'word_count' => str_word_count($text),
-                    'character_count' => strlen($text),
-                    'extracted_at' => now()->toISOString(),
-                ]),
+                'metadata' => $metadata,
             ]);
 
             return $source->fresh();
@@ -195,6 +202,27 @@ class DocumentExtractionService
 
         $zip->close();
         return $text;
+    }
+
+    protected function datasetMetadataFromExtractedText(string $text): array
+    {
+        $lines = array_values(array_filter(array_map('trim', preg_split('/\R/', $text) ?: [])));
+        if (empty($lines)) {
+            return ['dataset_rows_extracted' => 0, 'dataset_columns' => []];
+        }
+
+        $delimiter = str_contains($lines[0], '|') ? '|' : (str_contains($lines[0], ',') ? ',' : null);
+        $columns = [];
+        if ($delimiter) {
+            $columns = array_values(array_filter(array_map(fn ($v) => trim((string) $v), explode($delimiter, $lines[0]))));
+        }
+
+        return [
+            'dataset_rows_extracted' => max(0, count($lines) - 1),
+            'dataset_columns' => array_slice($columns, 0, 60),
+            'dataset_sample_rows' => array_slice($lines, 1, 8),
+            'dataset_summary' => 'Dataset text extracted. Use columns/sample rows only as evidence; do not invent values beyond uploaded data.',
+        ];
     }
 
     protected function markExtraction(NuruxploreSource $source, string $status, ?string $message = null, array $extra = []): void

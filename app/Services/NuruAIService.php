@@ -74,6 +74,19 @@ class NuruAIService
 
         foreach ($chunks as $i => $chunk) {
             $chunkNumber = $i + 1;
+
+            // Reference-heavy chunks often exceed JSON limits. Extract a compact
+            // local summary instead of asking the model to return a huge JSON array.
+            if ($this->isReferenceHeavyChunk($chunk)) {
+                $summaries[] = $this->referenceHeavyChunkSummary($chunk);
+                $warnings[] = [
+                    'chunk' => $chunkNumber,
+                    'message' => 'Reference-heavy chunk summarized locally to avoid invalid JSON.',
+                    'model' => 'deterministic',
+                ];
+                continue;
+            }
+
             $result = $this->extractProfileChunk($project, $chunk, $chunkNumber, count($chunks));
             $tokens += (int) ($result['tokens_used'] ?? 0);
 
@@ -161,6 +174,37 @@ class NuruAIService
             'message' => count($warnings) > 0
                 ? 'Research profile generated with warnings. Please review before approving.'
                 : 'Research profile generated successfully.',
+        ];
+    }
+
+    protected function isReferenceHeavyChunk(string $chunk): bool
+    {
+        $lower = strtolower($chunk);
+        $hasReferenceHeading = preg_match('/\b(references|bibliography)\b/i', $chunk) === 1;
+        preg_match_all('/\(\d{4}\)|\(n\.d\.\)|doi:|https?:\/\//i', $chunk, $m);
+        $referenceSignals = count($m[0] ?? []);
+        return $hasReferenceHeading && ($referenceSignals >= 5 || str_word_count($chunk) > 900);
+    }
+
+    protected function referenceHeavyChunkSummary(string $chunk): array
+    {
+        $references = array_slice($this->extractReferenceEntries($chunk), 0, 8);
+        return [
+            'title' => null,
+            'background_points' => [],
+            'problem_statement_points' => [],
+            'general_objective' => null,
+            'specific_objectives' => [],
+            'research_questions' => [],
+            'hypotheses' => [],
+            'methodology' => [],
+            'variables' => [],
+            'dataset_summary' => [],
+            'limitations' => [],
+            'references_available' => !empty($references),
+            'reference_count_estimate' => count($references),
+            'key_reference_examples' => $references,
+            'extraction_note' => 'Reference-heavy chunk summarized locally.',
         ];
     }
 
@@ -330,6 +374,11 @@ STRICT WRITING RULES:
 - Do not change the approved title, objectives, methodology, study area, population, or sample size.
 - Do not use generic citation placeholders. If exact references are not available, write the claim without a fake citation.
 - If this section is about results/findings and no dataset is available, write a planned findings/data-presentation framework, not actual findings.
+- If a dataset is uploaded, use only dataset facts available in the research profile/source context; do not invent frequencies, percentages, p-values, or tables.
+- For proposal Abstract sections, write 150-250 words only.
+- For proposal General Objective sections, write one direct objective sentence only.
+- For proposal Specific Objectives and Research Questions, use a numbered list, not paragraphs.
+- For Timeline/Work Plan sections, prefer a concise Markdown table.
 - Avoid repeating the same idea or paragraph.
 - Use formal academic English.
 - Use {$project->citation_style} only where actual reference details exist in the research profile.
@@ -1605,30 +1654,102 @@ EOT;
 
         foreach ($examples as $example) {
             $example = trim((string) $example);
-            if ($example !== '') {
+            if ($example !== '' && !$this->referenceConflictsWithProjectTopic($example, $project)) {
                 $lines[] = rtrim($example, '.') . '.';
             }
         }
 
-        $baseline = [
-            'Avert. (n.d.). Prevention of mother-to-child transmission of HIV. Avert. [Verify publication details before submission].',
-            'Joint United Nations Programme on HIV/AIDS. (n.d.). Global AIDS update. UNAIDS. [Verify year and title before submission].',
-            'Ministry of Health Tanzania. (n.d.). National guidelines for the management of HIV and AIDS. Government of Tanzania. [Verify publication year before submission].',
-            'World Health Organization. (n.d.). Consolidated guidelines on HIV prevention, testing, treatment, service delivery and monitoring. World Health Organization. [Verify publication year before submission].',
-            'World Health Organization. (n.d.). HIV and infant feeding guideline. World Health Organization. [Verify publication year before submission].',
-        ];
+        // Never use one project/topic's old demo references as a global fallback.
+        // When no verified references exist, create topic-aware preliminary entries
+        // and mark them for verification.
+        if (count($lines) < max(3, min($minimumReferences ?: 5, 8))) {
+            $lines = array_merge($lines, $this->topicAwarePreliminaryReferences($project));
+        }
 
-        $lines = array_merge($lines, $baseline);
-        $lines = $this->uniqueReferenceEntries($lines);
+        $lines = array_values(array_filter($this->uniqueReferenceEntries($lines), fn ($entry) => !$this->referenceConflictsWithProjectTopic($entry, $project)));
 
         if ($minimumReferences > count($lines)) {
             $needed = min($minimumReferences - count($lines), 30);
             for ($i = 1; $i <= $needed; $i++) {
-                $lines[] = 'Additional source ' . $i . '. (n.d.). Reference details to verify from uploaded bibliography/source document. [Verify author, year, title, publisher/journal, and URL/DOI before submission].';
+                $lines[] = 'Additional topic-relevant source ' . $i . '. (n.d.). Reference details to verify for ' . $this->humanStudyPhrase($project->title) . '. [Verify author, year, title, publisher/journal, and URL/DOI before submission].';
             }
         }
 
         return $this->formatReferenceEntries($lines, $minimumReferences);
+    }
+
+    protected function topicAwarePreliminaryReferences(NuruxploreProject $project): array
+    {
+        $topic = strtolower($project->title . ' ' . ($project->description ?? '') . ' ' . ($project->research_question ?? ''));
+
+        if (preg_match('/\b(hiv|aids|pmtct|mother-to-child|mtct|antenatal|pregnan|infant feeding)\b/i', $topic)) {
+            return [
+                'World Health Organization. (n.d.). Consolidated guidelines on HIV prevention, testing, treatment, service delivery and monitoring. World Health Organization. [Verify latest year and title before submission].',
+                'Joint United Nations Programme on HIV/AIDS. (n.d.). Global AIDS update. UNAIDS. [Verify latest year and title before submission].',
+                'Ministry of Health Tanzania. (n.d.). National guidelines for the management of HIV and AIDS. Government of Tanzania. [Verify latest year and title before submission].',
+                'Avert. (n.d.). Prevention of mother-to-child transmission of HIV. Avert. [Verify publication details before submission].',
+            ];
+        }
+
+        if (preg_match('/\b(social media|facebook|twitter|instagram|whatsapp|digital|online|civic|youth|political participation|engagement)\b/i', $topic)) {
+            return [
+                'Boyd, D. M., & Ellison, N. B. (2007). Social network sites: Definition, history, and scholarship. Journal of Computer-Mediated Communication, 13(1), 210–230. [Verify details before submission].',
+                'Boulianne, S. (2015). Social media use and participation: A meta-analysis of current research. Information, Communication & Society, 18(5), 524–538. [Verify details before submission].',
+                'Loader, B. D., Vromen, A., & Xenos, M. A. (2014). The networked young citizen: Social media, political participation, and civic engagement. Information, Communication & Society, 17(2), 143–150. [Verify details before submission].',
+                'Xenos, M., Vromen, A., & Loader, B. D. (2014). The great equalizer? Patterns of social media use and youth political engagement. Information, Communication & Society, 17(2), 151–167. [Verify details before submission].',
+                'Tanzania Communications Regulatory Authority. (n.d.). Communications statistics report. TCRA. [Verify latest report year and title before submission].',
+                'United Republic of Tanzania. (n.d.). National ICT policy or digital transformation policy document. Government of Tanzania. [Verify latest title and year before submission].',
+                'Norris, P. (2001). Digital divide: Civic engagement, information poverty, and the Internet worldwide. Cambridge University Press. [Verify details before submission].',
+                'Putnam, R. D. (2000). Bowling alone: The collapse and revival of American community. Simon & Schuster. [Verify details before submission].',
+            ];
+        }
+
+        if (preg_match('/\b(mobile banking|mobile money|financial inclusion|fintech|small business|sme|entrepreneur)\b/i', $topic)) {
+            return [
+                'Bank of Tanzania. (n.d.). Financial stability report. Bank of Tanzania. [Verify latest report year before submission].',
+                'FinScope Tanzania. (n.d.). Financial inclusion insights report. [Verify latest report year and publisher before submission].',
+                'World Bank. (n.d.). Global Findex database report. World Bank. [Verify latest edition before submission].',
+                'GSMA. (n.d.). State of the industry report on mobile money. GSMA. [Verify latest edition before submission].',
+                'Tanzania Communications Regulatory Authority. (n.d.). Communications statistics report. TCRA. [Verify latest report year before submission].',
+            ];
+        }
+
+        if (preg_match('/\b(teacher|education|school|student|academic performance|secondary school)\b/i', $topic)) {
+            return [
+                'Ministry of Education, Science and Technology. (n.d.). Education sector performance report. Government of Tanzania. [Verify latest report year before submission].',
+                'UNESCO. (n.d.). Global education monitoring report. UNESCO. [Verify latest report year before submission].',
+                'World Bank. (n.d.). World development report on education or learning. World Bank. [Verify latest title and year before submission].',
+                'Hattie, J. (2009). Visible learning: A synthesis of over 800 meta-analyses relating to achievement. Routledge. [Verify details before submission].',
+            ];
+        }
+
+        return [
+            'Creswell, J. W., & Creswell, J. D. (2018). Research design: Qualitative, quantitative, and mixed methods approaches. SAGE Publications. [Verify edition before submission].',
+            'Bryman, A. (2016). Social research methods. Oxford University Press. [Verify edition before submission].',
+            'Kothari, C. R. (2004). Research methodology: Methods and techniques. New Age International. [Verify details before submission].',
+            'United Republic of Tanzania. (n.d.). Relevant national policy, strategy, or statistical report on the study topic. Government of Tanzania. [Verify exact title and year before submission].',
+            'World Bank. (n.d.). Relevant development indicators or sector report. World Bank. [Verify exact title and year before submission].',
+        ];
+    }
+
+    protected function referenceConflictsWithProjectTopic(string $reference, NuruxploreProject $project): bool
+    {
+        $topic = strtolower($project->title . ' ' . ($project->description ?? '') . ' ' . ($project->research_question ?? ''));
+        $referenceLower = strtolower($reference);
+
+        $isHivTopic = preg_match('/\b(hiv|aids|pmtct|mother-to-child|mtct|antenatal|pregnan|infant)\b/i', $topic) === 1;
+        $isHivReference = preg_match('/\b(hiv|aids|pmtct|mother-to-child|mtct|antenatal|pregnan|infant feeding|unaids|avert)\b/i', $referenceLower) === 1;
+        if (!$isHivTopic && $isHivReference) {
+            return true;
+        }
+
+        $isSocialTopic = preg_match('/\b(social media|civic|digital|online|youth|political participation)\b/i', $topic) === 1;
+        $isMedicalReference = preg_match('/\b(clinical|patient|disease|treatment|therapy|hospital|maternal|infant|hiv|aids)\b/i', $referenceLower) === 1;
+        if ($isSocialTopic && $isMedicalReference) {
+            return true;
+        }
+
+        return false;
     }
 
     protected function requestedReferenceCount(string $instruction): int
@@ -1669,7 +1790,11 @@ EOT;
             $entries = array_merge($entries, $fallback);
         }
 
-        $entries = $this->uniqueReferenceEntries($entries);
+        $entries = array_values(array_filter($this->uniqueReferenceEntries($entries), fn ($entry) => !$this->referenceConflictsWithProjectTopic($entry, $project)));
+        if (count($entries) < max(1, min($minimumReferences ?: 5, 5))) {
+            $entries = array_values(array_filter(array_merge($entries, $this->extractReferenceEntries($this->fallbackReferenceList($project, $minimumReferences))), fn ($entry) => !$this->referenceConflictsWithProjectTopic($entry, $project)));
+            $entries = $this->uniqueReferenceEntries($entries);
+        }
         $mainList = $this->formatReferenceEntries($entries, $minimumReferences);
 
         if (!empty($verifyEntries)) {
@@ -2710,6 +2835,35 @@ EOT;
         return implode("\n", $lines);
     }
 
+    protected function datasetContext(NuruxploreProject $project): string
+    {
+        $sources = $project->relationLoaded('sources') ? $project->sources : $project->sources()->get();
+        $datasetSources = [];
+        foreach ($sources as $source) {
+            $role = strtolower((string) ($source->metadata['document_role'] ?? $source->type ?? ''));
+            $type = strtolower((string) $source->type);
+            $ext = strtolower((string) ($source->metadata['file_extension'] ?? ''));
+            if (in_array($role, ['dataset', 'data', 'survey_data', 'collected_data'], true) || in_array($type, ['dataset', 'data', 'csv', 'excel'], true) || in_array($ext, ['csv', 'xlsx'], true)) {
+                $datasetSources[] = [
+                    'title' => $source->title,
+                    'role' => $role ?: $type,
+                    'metadata' => $source->metadata,
+                    'sample' => $this->limitWords((string) $source->extracted_text, 600),
+                ];
+            }
+        }
+
+        if (empty($datasetSources)) {
+            return 'No uploaded dataset found. Results/findings must be planned or expected only; do not invent actual findings.';
+        }
+
+        return $this->json([
+            'dataset_uploaded' => true,
+            'sources' => $datasetSources,
+            'rule' => 'Use only values, columns, and patterns visible in the uploaded dataset/source text. Do not invent frequencies, percentages, p-values, or totals.',
+        ]);
+    }
+
     protected function sectionContext(NuruxploreSection $section): string
     {
         $project = $section->project;
@@ -2754,6 +2908,25 @@ EOT;
         $title = strtolower($section->title);
         $parent = strtolower((string) ($section->parent?->title ?? ''));
         $combined = trim($parent . ' ' . $title);
+        $isProposal = ($section->project?->type === 'proposal');
+
+        if ($isProposal) {
+            return match (true) {
+                str_contains($combined, 'abstract') => 210,
+                str_contains($combined, 'reference') => 180,
+                str_contains($combined, 'general objective') => 70,
+                str_contains($combined, 'specific objective') => 160,
+                str_contains($combined, 'research question') || str_contains($combined, 'specific question') || str_contains($combined, 'main research question') => 160,
+                str_contains($combined, 'background') => 520,
+                str_contains($combined, 'problem') => 380,
+                str_contains($combined, 'gap') => 250,
+                str_contains($combined, 'literature'), str_contains($combined, 'empirical'), str_contains($combined, 'theoretical') => 520,
+                str_contains($combined, 'methodology'), str_contains($combined, 'design'), str_contains($combined, 'sampling'), str_contains($combined, 'data collection'), str_contains($combined, 'data analysis') => 360,
+                str_contains($combined, 'timeline') || str_contains($combined, 'work plan') || str_contains($combined, 'schedule') => 180,
+                str_contains($combined, 'expected') || str_contains($combined, 'planned') || str_contains($combined, 'finding') => 320,
+                default => 320,
+            };
+        }
 
         return match (true) {
             str_contains($combined, 'abstract') => 280,
@@ -2765,7 +2938,7 @@ EOT;
             str_contains($combined, 'literature'), str_contains($combined, 'empirical'), str_contains($combined, 'theoretical') => 750,
             str_contains($combined, 'methodology'), str_contains($combined, 'design'), str_contains($combined, 'sampling'), str_contains($combined, 'data collection'), str_contains($combined, 'data analysis') => 550,
             str_contains($combined, 'discussion') => 600,
-            str_contains($combined, 'result'), str_contains($combined, 'finding') => $this->hasDataset($section->project) ? 600 : 420,
+            str_contains($combined, 'result'), str_contains($combined, 'finding') => $this->hasDataset($section->project) ? 650 : 420,
             str_contains($combined, 'conclusion'), str_contains($combined, 'recommendation') => 550,
             default => 480,
         };
@@ -3016,6 +3189,16 @@ EOT;
 
             if ($this->isAbstractOrReferences($title)) {
                 $subsections = [];
+            }
+
+            if ($project->type === 'proposal' && preg_match('/introduction/i', $title)) {
+                $subsections = array_values(array_filter((array) $subsections, function ($subsection) {
+                    $subTitle = strtolower(is_array($subsection) ? (string) ($subsection['title'] ?? '') : (string) $subsection);
+                    return !preg_match('/objective|research question|specific question|general objective|main research question/i', $subTitle);
+                }));
+                if (empty($subsections)) {
+                    $subsections = ['Background', 'Problem Statement', 'Research Gap'];
+                }
             }
 
             if (!$this->hasDataset($project) && preg_match('/result|finding/i', $title)) {
