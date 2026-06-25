@@ -336,25 +336,47 @@ STRICT WRITING RULES:
 EOT;
 
         $result = $this->groq->callGroqAPI($systemPrompt, $userPrompt, 2600, null, $this->groq->writingModel(), 0.22);
+        $usedDeterministicFallback = false;
+        $fallbackReason = null;
+
         if (!$result['success']) {
-            return $result;
-        }
+            $fallback = $this->deterministicSectionFallback($section, $extraInstruction, 'AI provider call failed: ' . ($result['error'] ?? 'unknown error'));
+            if (blank($fallback)) {
+                return $result;
+            }
 
-        $content = $this->cleanGeneratedSectionContent((string) $result['content'], $section);
+            $content = $this->cleanGeneratedSectionContent($fallback, $section);
+            $usedDeterministicFallback = true;
+            $fallbackReason = $result['error'] ?? 'AI provider call failed.';
+            $result['tokens_used'] = $result['tokens_used'] ?? 0;
+        } else {
+            $content = $this->cleanGeneratedSectionContent((string) $result['content'], $section);
 
-        // One quality retry if model produced repeated text or placeholders.
-        if ($this->needsQualityRetry($content)) {
-            $retryPrompt = $userPrompt . "\n\nQUALITY CORRECTION:\nYour previous response contained repeated text or placeholders. Rewrite cleanly. Body text only. No placeholders. No repeated paragraphs.";
-            $retry = $this->groq->callGroqAPI($systemPrompt, $retryPrompt, 2300, null, $this->groq->writingModel(), 0.18);
-            if ($retry['success'] && !blank($retry['content'] ?? '')) {
-                $content = $this->cleanGeneratedSectionContent((string) $retry['content'], $section);
-                $result['tokens_used'] = (int) ($result['tokens_used'] ?? 0) + (int) ($retry['tokens_used'] ?? 0);
-                $result['model'] = $retry['model'] ?? ($result['model'] ?? null);
+            // One quality retry if model produced repeated text or placeholders.
+            if ($this->needsQualityRetry($content)) {
+                $retryPrompt = $userPrompt . "\n\nQUALITY CORRECTION:\nYour previous response contained repeated text or placeholders. Rewrite cleanly. Body text only. No placeholders. No repeated paragraphs.";
+                $retry = $this->groq->callGroqAPI($systemPrompt, $retryPrompt, 2300, null, $this->groq->writingModel(), 0.18);
+                if ($retry['success'] && !blank($retry['content'] ?? '')) {
+                    $content = $this->cleanGeneratedSectionContent((string) $retry['content'], $section);
+                    $result['tokens_used'] = (int) ($result['tokens_used'] ?? 0) + (int) ($retry['tokens_used'] ?? 0);
+                    $result['model'] = $retry['model'] ?? ($result['model'] ?? null);
+                }
             }
         }
 
         if (blank($content)) {
-            return ['success' => false, 'error' => 'AI returned empty section content after cleanup.'];
+            $fallback = $this->deterministicSectionFallback($section, $extraInstruction, 'AI returned empty section content after cleanup.');
+            if (blank($fallback)) {
+                return ['success' => false, 'error' => 'AI returned empty section content after cleanup.'];
+            }
+
+            $content = $this->cleanGeneratedSectionContent($fallback, $section);
+            $usedDeterministicFallback = true;
+            $fallbackReason = 'AI returned empty section content after cleanup.';
+        }
+
+        if (blank($content)) {
+            return ['success' => false, 'error' => 'Fallback section content was empty after cleanup.'];
         }
 
         $summary = $this->summarizeSection($project, $section->title, $content);
@@ -368,6 +390,8 @@ EOT;
                 'target_words' => $targetWords,
                 'summary' => $summary,
                 'quality_flags' => $this->qualityFlags($content),
+                'used_deterministic_fallback' => $usedDeterministicFallback,
+                'fallback_reason' => $fallbackReason,
                 'generated_at' => now()->toISOString(),
             ]),
         ]);
@@ -2519,6 +2543,171 @@ Rules:
 - For proposal include: Abstract, Introduction, Objectives, Research Questions, Literature Review, Methodology, Expected Outcomes, Timeline, References.
 - Keep each chapter to 3-5 useful subsections except Abstract and References.
 EOT;
+    }
+
+
+    /**
+     * Deterministic safety fallback for small required sections.
+     *
+     * Long document generation should not fail because the model returned an empty
+     * body for structural sections like General Objective, Specific Objectives,
+     * Research Questions, Work Plan, or Planned Data Presentation. This fallback
+     * keeps the job moving while clearly using approved project/profile facts.
+     */
+    protected function deterministicSectionFallback(NuruxploreSection $section, ?string $extraInstruction = null, ?string $reason = null): string
+    {
+        $project = $section->project;
+        $title = strtolower(trim($section->title));
+        $parent = strtolower((string) ($section->parent?->title ?? ''));
+        $combined = trim($parent . ' ' . $title);
+        $profile = is_array($project->research_profile) ? $project->research_profile : [];
+        $studyTitle = trim((string) ($profile['title'] ?? $project->title));
+        $studyPhrase = $this->humanStudyPhrase($studyTitle);
+        $studyArea = trim((string) data_get($profile, 'methodology.study_area', 'the selected study area'));
+        $population = trim((string) data_get($profile, 'methodology.population', 'the target population'));
+
+        $generalObjective = trim((string) ($profile['general_objective'] ?? ''));
+        $specificObjectives = array_values(array_filter(array_map('trim', (array) ($profile['specific_objectives'] ?? []))));
+        $researchQuestions = array_values(array_filter(array_map('trim', (array) ($profile['research_questions'] ?? []))));
+
+        if (str_contains($combined, 'general objective')) {
+            return $generalObjective ?: 'The general objective of this study is to assess ' . $studyPhrase . '.';
+        }
+
+        if (str_contains($combined, 'specific objective')) {
+            if (!empty($specificObjectives)) {
+                return $this->numberedLines($specificObjectives);
+            }
+
+            return $this->numberedLines([
+                'To examine the current level, pattern, or extent of ' . $studyPhrase . '.',
+                'To identify the key factors associated with ' . $studyPhrase . '.',
+                'To determine the major challenges or gaps related to ' . $studyPhrase . '.',
+                'To propose practical recommendations for improving policy, practice, or future research on ' . $studyPhrase . '.',
+            ]);
+        }
+
+        if (str_contains($combined, 'main research question')) {
+            if (!empty($researchQuestions)) {
+                return $researchQuestions[0];
+            }
+
+            return 'What is the current pattern, influence, or significance of ' . $studyPhrase . '?';
+        }
+
+        if (str_contains($combined, 'specific question') || preg_match('/\bresearch questions?\b/i', $combined)) {
+            if (!empty($researchQuestions)) {
+                return $this->numberedLines($researchQuestions);
+            }
+
+            return $this->numberedLines([
+                'What is the current level or pattern of ' . $studyPhrase . '?',
+                'What factors are associated with ' . $studyPhrase . '?',
+                'What challenges or gaps affect ' . $studyPhrase . '?',
+                'What practical measures can improve outcomes related to ' . $studyPhrase . '?',
+            ]);
+        }
+
+        if (str_contains($combined, 'hypoth')) {
+            return $this->numberedLines([
+                'H0: There is no statistically significant relationship between the selected independent variables and ' . $studyPhrase . '.',
+                'H1: There is a statistically significant relationship between the selected independent variables and ' . $studyPhrase . '.',
+            ]);
+        }
+
+        if (str_contains($combined, 'research design')) {
+            return 'This study will use an appropriate research design to examine ' . $studyPhrase . '. The design will guide the selection of respondents, data collection procedures, and analysis methods so that the findings remain aligned with the study objectives. Where primary data are collected, the design will support systematic collection of evidence from ' . $population . ' in ' . $studyArea . '.';
+        }
+
+        if (str_contains($combined, 'population') || str_contains($combined, 'sampling')) {
+            return 'The target population for this study will include ' . $population . '. The sample will be selected using a suitable sampling strategy based on the nature of the study, available resources, and the need to obtain reliable information from respondents who can address the research objectives. The final sampling procedure and sample size should be confirmed before field data collection.';
+        }
+
+        if (str_contains($combined, 'data collection')) {
+            return 'Data will be collected using tools that are appropriate to the study objectives, such as questionnaires, interviews, document review, or observation where relevant. The data collection process will focus on obtaining information that directly addresses the research questions and supports valid analysis of ' . $studyPhrase . '.';
+        }
+
+        if (str_contains($combined, 'data analysis')) {
+            return "Data will be organized, cleaned, and analyzed according to the study objectives. Quantitative data may be summarized using frequencies, percentages, and relevant statistical tests, while qualitative responses may be analyzed thematically. The selected analysis approach should remain consistent with the study design and the type of data collected.";
+        }
+
+        if (str_contains($combined, 'theoretical framework')) {
+            return 'The theoretical framework will provide the academic foundation for understanding ' . $studyPhrase . '. It will explain the key concepts, relationships, and assumptions that guide the study. The selected theory should be directly linked to the research objectives and should help interpret the expected findings within the Tanzanian context where applicable.';
+        }
+
+        if (str_contains($combined, 'conceptual framework')) {
+            return "The conceptual framework will show the expected relationship between the study variables. It will identify the main independent variables, the dependent variable, and possible contextual factors that may influence the relationship. This framework will help guide data collection, analysis, and interpretation of findings.\n\n| Independent Variables | Dependent Variable | Expected Relationship |\n|---|---|---|\n| Individual, social, institutional, or contextual factors | Main study outcome related to " . $studyPhrase . " | These factors may influence the level, pattern, or outcome being investigated |";
+        }
+
+        if (str_contains($combined, 'planned data presentation') || str_contains($combined, 'expected finding') || str_contains($combined, 'expected outcome') || str_contains($combined, 'findings')) {
+            return "The findings will be presented according to the research objectives. Since no verified dataset has been uploaded, this section provides a planned presentation structure rather than actual findings.\n\n| Research Objective | Data to be Presented | Analysis Method | Expected Output |\n|---|---|---|---|\n| Objective 1 | Descriptive information related to the main study issue | Frequencies and percentages | Summary of current level or pattern |\n| Objective 2 | Factors associated with the study issue | Cross-tabulation or relevant statistical test | Explanation of key associations |\n| Objective 3 | Challenges, gaps, or barriers | Descriptive or thematic analysis | Identification of major challenges |\n| Objective 4 | Recommendations | Synthesis of findings | Practical recommendations for improvement |";
+        }
+
+        if (str_contains($combined, 'contribution')) {
+            return 'The study is expected to contribute to academic knowledge, policy discussion, and practical decision-making related to ' . $studyPhrase . '. The findings may help researchers, institutions, practitioners, and policy makers understand the issue more clearly and identify areas for future improvement.';
+        }
+
+        if (str_contains($combined, 'work plan') || str_contains($combined, 'schedule') || str_contains($combined, 'timeline')) {
+            return "The study will be implemented in phases, beginning with proposal development and approval, followed by tool preparation, data collection, analysis, report writing, and final submission.\n\n| Activity | Expected Period | Output |\n|---|---|---|\n| Proposal development and approval | Month 1 | Approved research proposal |\n| Literature review and tool preparation | Month 1–2 | Reviewed literature and data collection tools |\n| Data collection | Month 2–3 | Completed field data collection |\n| Data analysis | Month 3 | Analyzed data |\n| Report writing and revision | Month 4 | Draft and final research report |";
+        }
+
+        if (str_contains($combined, 'limitation')) {
+            return 'The study may be limited by time, availability of respondents, access to complete records, and the accuracy of self-reported information. These limitations will be managed through careful planning, clear data collection procedures, and transparent reporting of the study scope.';
+        }
+
+        if (str_contains($combined, 'ethic')) {
+            return 'The study will observe relevant ethical principles, including voluntary participation, informed consent, confidentiality, and respect for respondents. Permission will be sought from relevant authorities before data collection, and collected information will be used only for academic purposes.';
+        }
+
+        if (str_contains($combined, 'abstract')) {
+            return 'This study focuses on ' . $studyPhrase . '. It is designed to examine the background, problem, objectives, methodology, and expected contribution of the proposed research. The study will use appropriate data collection and analysis procedures to generate evidence that can support academic understanding and practical decision-making.';
+        }
+
+        if (str_contains($combined, 'background')) {
+            return 'The background of this study explains the context and importance of ' . $studyPhrase . '. The topic is relevant because it reflects an issue that affects individuals, institutions, communities, or policy practice. Understanding this area provides a foundation for identifying the research problem, formulating objectives, and designing an appropriate methodology.';
+        }
+
+        if (str_contains($combined, 'problem')) {
+            return 'Despite growing attention to ' . $studyPhrase . ', important gaps remain in understanding the nature, extent, and influencing factors of the problem. These gaps limit the ability of stakeholders to design evidence-based interventions or make informed decisions. This study therefore seeks to address the problem by generating structured evidence aligned with the research objectives.';
+        }
+
+        if (str_contains($combined, 'gap')) {
+            return 'The research gap is based on the need for more focused evidence on ' . $studyPhrase . '. Existing knowledge may not fully explain the local context, key determinants, or practical implications of the issue. This study is therefore intended to contribute context-specific evidence and support future academic and policy discussions.';
+        }
+
+        // Generic fallback only for short structural sections. Long literature/discussion
+        // sections should normally be handled by the model, but this prevents hard job failure.
+        return 'This section will address ' . $studyPhrase . ' in line with the approved research title, objectives, and methodology. It should be reviewed and expanded where necessary to match supervisor guidance and institutional formatting requirements.';
+    }
+
+    protected function humanStudyPhrase(string $title): string
+    {
+        $title = trim($title);
+        if ($title === '') {
+            return 'the research problem under investigation';
+        }
+
+        $phrase = preg_replace('/^(assessment|analysis|evaluation|investigation|study|the study|research)\s+of\s+/i', '', $title);
+        $phrase = preg_replace('/^(the\s+)?(impact|influence|effect|factors)\s+of\s+/i', '$2 of ', $phrase);
+        $phrase = trim((string) $phrase, " .\t\n\r\0\x0B");
+        $phrase = lcfirst($phrase);
+
+        return $phrase !== '' ? $phrase : 'the research problem under investigation';
+    }
+
+    protected function numberedLines(array $items): string
+    {
+        $lines = [];
+        foreach (array_values($items) as $index => $item) {
+            $item = trim((string) $item);
+            if ($item === '') {
+                continue;
+            }
+            $item = rtrim($item, '.');
+            $lines[] = ($index + 1) . '. ' . $item . '.';
+        }
+
+        return implode("\n", $lines);
     }
 
     protected function sectionContext(NuruxploreSection $section): string
