@@ -2790,9 +2790,19 @@ EOT;
                 || preg_match('/^\*\*.+\*\*$/', $first)
                 || ($sectionNumber && preg_match('/^' . $sectionNumber . '\s+/i', $first));
 
-            $matchesTitle = $plain !== '' && ($plain === $sectionTitle || str_contains($plain, $sectionTitle) || str_contains($sectionTitle, $plain));
+            // Only remove the first line when it is genuinely a heading/title line.
+            // Previous logic removed any sentence that merely contained the section title.
+            // Example bug: "The general objective of this study is..." contains
+            // "general objective", so it was stripped and the fallback became empty.
+            $wordCount = str_word_count($plain);
+            $isShortTitleLine = $wordCount > 0 && $wordCount <= 8;
+            $matchesExactTitle = $plain !== '' && $plain === $sectionTitle;
+            $matchesShortTitle = $isShortTitleLine
+                && $plain !== ''
+                && $sectionTitle !== ''
+                && (str_contains($plain, $sectionTitle) || str_contains($sectionTitle, $plain));
 
-            if ($isHeading || $matchesTitle) {
+            if ($isHeading || $matchesExactTitle || $matchesShortTitle) {
                 array_shift($lines);
                 continue;
             }
