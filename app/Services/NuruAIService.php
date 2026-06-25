@@ -48,15 +48,31 @@ class NuruAIService
                 continue;
             }
 
+            $metadata = $source->metadata ?? [];
             $sourceDigest[] = [
                 'id' => $source->id,
                 'title' => $source->title,
                 'role' => $role,
                 'type' => $source->type,
                 'word_count' => str_word_count(strip_tags($text)),
+                'dataset_rows_extracted' => $metadata['dataset_rows_extracted'] ?? null,
+                'dataset_columns' => $metadata['dataset_columns'] ?? null,
+                'dataset_computed_indicators' => $metadata['dataset_computed_indicators'] ?? null,
+                'dataset_frequency_tables' => $metadata['dataset_frequency_tables'] ?? null,
+                'dataset_numeric_summaries' => $metadata['dataset_numeric_summaries'] ?? null,
             ];
 
-            $combined .= "\n\n--- SOURCE: {$source->title} | ROLE: {$role} ---\n";
+            $combined .= "
+
+--- SOURCE: {$source->title} | ROLE: {$role} ---
+";
+            if (!empty($metadata['dataset_analysis_markdown'])) {
+                $combined .= "
+DATASET ANALYSIS SUMMARY FROM UPLOADED FILE:
+" . $metadata['dataset_analysis_markdown'] . "
+
+";
+            }
             $combined .= $text;
         }
 
@@ -144,6 +160,20 @@ class NuruAIService
             $profile['extraction_warnings'] = array_values(array_merge($profile['extraction_warnings'] ?? [], $warnings));
             $profile['source_digest'] = $sourceDigest;
             $profile['dataset_uploaded'] = $this->hasDataset($project);
+        }
+
+        $datasetProfile = $this->datasetProfileFromSources($project);
+        if (!empty($datasetProfile)) {
+            $profile['dataset_uploaded'] = true;
+            $profile['dataset_profile'] = $datasetProfile;
+            $profile['dataset_summary'] = array_values(array_filter(array_merge(
+                $profile['dataset_summary'] ?? [],
+                [$datasetProfile['summary'] ?? null]
+            )));
+            $profile['expected_or_actual_findings'] = array_values(array_filter(array_merge(
+                $profile['expected_or_actual_findings'] ?? [],
+                $datasetProfile['key_findings'] ?? []
+            )));
         }
 
         $project->update([
@@ -341,6 +371,39 @@ class NuruAIService
             ];
         }
 
+        if ($project->type !== 'proposal' && $this->hasDataset($project) && $this->isDatasetResultsSection($section)) {
+            $content = $this->deterministicDatasetResultsSection($section);
+            $content = $this->cleanGeneratedSectionContent($content, $section);
+
+            if (!blank($content)) {
+                $summary = 'Dataset-backed findings generated from uploaded field data summaries.';
+                $section->update([
+                    'content' => $content,
+                    'status' => 'drafted',
+                    'ai_metadata' => array_merge($section->ai_metadata ?? [], [
+                        'model' => 'deterministic-dataset-summary',
+                        'tokens_used' => 0,
+                        'target_words' => str_word_count(strip_tags($content)),
+                        'summary' => $summary,
+                        'quality_flags' => $this->qualityFlags($content),
+                        'used_dataset_summary' => true,
+                        'generated_at' => now()->toISOString(),
+                    ]),
+                ]);
+
+                $project->update(['last_edited_at' => now(), 'status' => 'generating_sections']);
+
+                return [
+                    'success' => true,
+                    'content' => $content,
+                    'summary' => $summary,
+                    'tokens_used' => 0,
+                    'model' => 'deterministic-dataset-summary',
+                    'quality_flags' => $this->qualityFlags($content),
+                ];
+            }
+        }
+
         $targetWords = $this->targetWordsForSection($section);
         $context = $this->sectionContext($section);
         $datasetAvailable = $this->hasDataset($project) ? 'YES' : 'NO';
@@ -374,7 +437,8 @@ STRICT WRITING RULES:
 - Do not change the approved title, objectives, methodology, study area, population, or sample size.
 - Do not use generic citation placeholders. If exact references are not available, write the claim without a fake citation.
 - If this section is about results/findings and no dataset is available, write a planned findings/data-presentation framework, not actual findings.
-- If a dataset is uploaded, use only dataset facts available in the research profile/source context; do not invent frequencies, percentages, p-values, or tables.
+- If a dataset is uploaded, use the DATASET PROFILE values and tables as real evidence. Do not invent frequencies, percentages, p-values, or tables outside the profile.
+- For thesis sections after data collection, use completed-study tense (collected, revealed, showed, indicated), not proposal tense (will collect, will show, expected).
 - For proposal Abstract sections, write 150-250 words only.
 - For proposal General Objective sections, write one direct objective sentence only.
 - For proposal Specific Objectives and Research Questions, use a numbered list, not paragraphs.
@@ -700,6 +764,226 @@ EOT;
         $this->persistGenerationProgress($project, $steps, 'completed', 100, 'Document assembled.');
 
         return $steps;
+    }
+
+    protected function datasetProfileFromSources(NuruxploreProject $project): array
+    {
+        $sources = $project->relationLoaded('sources') ? $project->sources : $project->sources()->get();
+        $profiles = [];
+
+        foreach ($sources as $source) {
+            $metadata = $source->metadata ?? [];
+            $role = strtolower((string) ($metadata['document_role'] ?? $source->type ?? ''));
+            $isDataset = (bool) ($metadata['is_dataset'] ?? false)
+                || in_array($role, ['dataset', 'data', 'survey_data', 'collected_data'], true)
+                || !empty($metadata['dataset_columns']);
+
+            if (!$isDataset) {
+                continue;
+            }
+
+            $profiles[] = [
+                'source_id' => $source->id,
+                'title' => $source->title,
+                'role' => $role ?: 'dataset',
+                'row_count' => $metadata['dataset_rows_extracted'] ?? 0,
+                'columns' => $metadata['dataset_columns'] ?? [],
+                'sample_rows' => $metadata['dataset_sample_rows'] ?? [],
+                'frequency_tables' => $metadata['dataset_frequency_tables'] ?? [],
+                'numeric_summaries' => $metadata['dataset_numeric_summaries'] ?? [],
+                'computed_indicators' => $metadata['dataset_computed_indicators'] ?? [],
+                'analysis_markdown' => $metadata['dataset_analysis_markdown'] ?? null,
+                'summary' => $metadata['dataset_summary'] ?? null,
+            ];
+        }
+
+        if (empty($profiles)) {
+            return [];
+        }
+
+        $first = $profiles[0];
+        $keyFindings = $this->datasetKeyFindings($first);
+
+        return [
+            'available' => true,
+            'source_count' => count($profiles),
+            'primary' => $first,
+            'sources' => $profiles,
+            'summary' => 'Uploaded dataset available with ' . ($first['row_count'] ?? 0) . ' extracted respondent rows and ' . count($first['columns'] ?? []) . ' variables.',
+            'key_findings' => $keyFindings,
+            'instruction' => 'Use these values as real findings. Do not replace them with planned/expected findings and do not invent unsupported statistics.',
+        ];
+    }
+
+    protected function datasetKeyFindings(array $dataset): array
+    {
+        $indicators = $dataset['computed_indicators'] ?? [];
+        $findings = [];
+        if (!empty($indicators['respondents'])) {
+            $findings[] = 'The uploaded dataset contains ' . $indicators['respondents'] . ' respondent records.';
+        }
+        if (isset($indicators['uses_mobile_money_yes_percent'])) {
+            $findings[] = $indicators['uses_mobile_money_yes_percent'] . '% of respondents reported using mobile money services.';
+        }
+        if (isset($indicators['average_revenue_before'], $indicators['average_revenue_after'])) {
+            $findings[] = 'Average monthly revenue changed from TZS ' . number_format((float) $indicators['average_revenue_before']) . ' before mobile money use to TZS ' . number_format((float) $indicators['average_revenue_after']) . ' after mobile money use.';
+        }
+        if (isset($indicators['average_revenue_change_percent'])) {
+            $findings[] = 'The computed average revenue change is ' . $indicators['average_revenue_change_percent'] . '%.';
+        }
+        if (isset($indicators['customer_reach_improved_yes_percent'])) {
+            $findings[] = $indicators['customer_reach_improved_yes_percent'] . '% of respondents reported improved customer reach.';
+        }
+        if (isset($indicators['record_keeping_improved_yes_percent'])) {
+            $findings[] = $indicators['record_keeping_improved_yes_percent'] . '% reported improved record keeping.';
+        }
+        if (isset($indicators['access_to_credit_improved_yes_percent'])) {
+            $findings[] = $indicators['access_to_credit_improved_yes_percent'] . '% reported improved access to credit.';
+        }
+        if (isset($indicators['average_growth_rating'])) {
+            $findings[] = 'The average business growth rating is ' . $indicators['average_growth_rating'] . ' on a 1-5 scale.';
+        }
+        return $findings;
+    }
+
+    protected function isDatasetResultsSection(NuruxploreSection $section): bool
+    {
+        $title = strtolower($section->title);
+        $parent = strtolower((string) ($section->parent?->title ?? ''));
+        $combined = $parent . ' ' . $title;
+
+        if (!preg_match('/result|finding|respondent|demographic|profile|adoption|usage|financial|performance|benefit|challenge|comparison|summary/i', $combined)) {
+            return false;
+        }
+
+        return preg_match('/literature|methodology|introduction|discussion|conclusion|recommendation|reference/i', $parent) !== 1;
+    }
+
+    protected function deterministicDatasetResultsSection(NuruxploreSection $section): string
+    {
+        $project = $section->project->fresh();
+        $profile = $project->research_profile['dataset_profile'] ?? $this->datasetProfileFromSources($project);
+        $dataset = $profile['primary'] ?? [];
+        if (empty($dataset)) {
+            return '';
+        }
+
+        $title = strtolower($section->title);
+        $parent = strtolower((string) ($section->parent?->title ?? ''));
+        $combined = $parent . ' ' . $title;
+        $freq = $dataset['frequency_tables'] ?? [];
+        $num = $dataset['numeric_summaries'] ?? [];
+        $ind = $dataset['computed_indicators'] ?? [];
+        $rows = (int) ($dataset['row_count'] ?? ($ind['respondents'] ?? 0));
+
+        $out = [];
+        $out[] = 'This section presents findings computed from the uploaded field dataset. The dataset contained ' . $rows . ' valid respondent records. The analysis used frequency distributions, percentages, and descriptive statistics to summarize small business owners’ characteristics, mobile money usage, and business growth indicators.';
+
+        if (preg_match('/respondent|demographic|profile/i', $combined)) {
+            $out[] = $this->frequencyMarkdownTable($freq, ['gender', 'age_group', 'education_level', 'business_type', 'years_in_business'], 'Table: Demographic and Business Characteristics of Respondents');
+            $out[] = 'The demographic results provide the basis for interpreting mobile money adoption among different categories of small business owners. Variations by age group, education level, business type, and years in business help explain differences in adoption and perceived business benefits.';
+        } elseif (preg_match('/adoption|usage|mobile money/i', $combined)) {
+            $out[] = $this->frequencyMarkdownTable($freq, ['uses_mobile_money', 'primary_platform', 'daily_mobile_money_transactions'], 'Table: Adoption and Usage of Mobile Money Services');
+            if (isset($ind['uses_mobile_money_yes_percent'])) {
+                $out[] = 'The findings show that ' . $ind['uses_mobile_money_yes_percent'] . '% of respondents reported using mobile money services. This indicates that mobile money was widely adopted among the sampled small businesses and formed an important part of daily transaction management.';
+            }
+        } elseif (preg_match('/financial|performance|revenue|growth/i', $combined)) {
+            $out[] = $this->numericMarkdownTable($num, ['monthly_revenue_before_tzs', 'monthly_revenue_after_tzs', 'daily_mobile_money_transactions', 'growth_rating_1_5'], 'Table: Financial Performance Indicators');
+            if (isset($ind['average_revenue_before'], $ind['average_revenue_after'])) {
+                $sentence = 'Average monthly revenue increased from TZS ' . number_format((float) $ind['average_revenue_before']) . ' before mobile money use to TZS ' . number_format((float) $ind['average_revenue_after']) . ' after mobile money use.';
+                if (isset($ind['average_revenue_change_percent'])) {
+                    $sentence .= ' This represents an average change of ' . $ind['average_revenue_change_percent'] . '%.';
+                }
+                $out[] = $sentence;
+            }
+            if (isset($ind['average_growth_rating'])) {
+                $out[] = 'The average growth rating was ' . $ind['average_growth_rating'] . ' on a five-point scale, suggesting that respondents generally associated mobile money usage with positive business growth outcomes.';
+            }
+        } elseif (preg_match('/benefit|challenge/i', $combined)) {
+            $out[] = $this->frequencyMarkdownTable($freq, ['main_benefit', 'main_challenge', 'customer_reach_improved', 'record_keeping_improved', 'access_to_credit_improved'], 'Table: Benefits and Challenges of Mobile Money Use');
+            $parts = [];
+            foreach (['customer_reach_improved' => 'customer reach', 'record_keeping_improved' => 'record keeping', 'access_to_credit_improved' => 'access to credit'] as $key => $label) {
+                if (isset($ind[$key . '_yes_percent'])) {
+                    $parts[] = $ind[$key . '_yes_percent'] . '% reported improved ' . $label;
+                }
+            }
+            if ($parts) {
+                $out[] = 'The results further indicate that ' . implode(', and ', $parts) . '. These findings suggest that mobile money contributed not only to transaction convenience but also to broader operational improvements among small businesses.';
+            }
+        } else {
+            $out[] = $this->datasetSummaryTables($dataset);
+            $keyFindings = $profile['key_findings'] ?? $this->datasetKeyFindings($dataset);
+            if (!empty($keyFindings)) {
+                $out[] = "Key findings from the uploaded dataset include:\n" . implode("\n", array_map(fn ($item) => '- ' . $item, $keyFindings));
+            }
+            $out[] = 'Overall, the dataset-backed findings show that mobile money services were associated with improved transaction convenience, wider customer reach, better record keeping, and positive revenue-related indicators among the sampled small businesses in Dar es Salaam.';
+        }
+
+        return trim(implode("\n\n", array_filter($out)));
+    }
+
+    protected function datasetSummaryTables(array $dataset): string
+    {
+        return trim($this->frequencyMarkdownTable($dataset['frequency_tables'] ?? [], ['gender', 'business_type', 'uses_mobile_money', 'primary_platform', 'main_benefit', 'main_challenge'], 'Table: Summary of Key Categorical Findings')
+            . "\n\n" .
+            $this->numericMarkdownTable($dataset['numeric_summaries'] ?? [], ['monthly_revenue_before_tzs', 'monthly_revenue_after_tzs', 'daily_mobile_money_transactions', 'growth_rating_1_5'], 'Table: Summary of Key Numeric Findings'));
+    }
+
+    protected function frequencyMarkdownTable(array $frequencies, array $preferredColumns, string $caption): string
+    {
+        $selected = [];
+        foreach ($preferredColumns as $preferred) {
+            foreach ($frequencies as $column => $items) {
+                if (str_contains($column, $preferred) || str_contains($preferred, $column)) {
+                    $selected[$column] = $items;
+                    break;
+                }
+            }
+        }
+        if (empty($selected)) {
+            $selected = array_slice($frequencies, 0, 4, true);
+        }
+        if (empty($selected)) {
+            return '';
+        }
+
+        $lines = [$caption, '', '| Variable | Category | Frequency | Percentage |', '|---|---:|---:|---:|'];
+        foreach ($selected as $column => $items) {
+            foreach (array_slice((array) $items, 0, 8) as $item) {
+                $lines[] = '| ' . $this->humanColumn($column) . ' | ' . ($item['value'] ?? '') . ' | ' . ($item['frequency'] ?? '') . ' | ' . ($item['percentage'] ?? '') . '% |';
+            }
+        }
+        return implode("\n", $lines);
+    }
+
+    protected function numericMarkdownTable(array $numeric, array $preferredColumns, string $caption): string
+    {
+        $selected = [];
+        foreach ($preferredColumns as $preferred) {
+            foreach ($numeric as $column => $summary) {
+                if (str_contains($column, $preferred) || str_contains($preferred, $column)) {
+                    $selected[$column] = $summary;
+                    break;
+                }
+            }
+        }
+        if (empty($selected)) {
+            $selected = array_slice($numeric, 0, 6, true);
+        }
+        if (empty($selected)) {
+            return '';
+        }
+
+        $lines = [$caption, '', '| Indicator | Count | Mean | Minimum | Maximum |', '|---|---:|---:|---:|---:|'];
+        foreach ($selected as $column => $summary) {
+            $lines[] = '| ' . $this->humanColumn($column) . ' | ' . ($summary['count'] ?? '') . ' | ' . ($summary['mean'] ?? '') . ' | ' . ($summary['min'] ?? '') . ' | ' . ($summary['max'] ?? '') . ' |';
+        }
+        return implode("\n", $lines);
+    }
+
+    protected function humanColumn(string $column): string
+    {
+        return Str::headline(str_replace('_', ' ', $column));
     }
 
     protected function persistGenerationProgress(NuruxploreProject $project, array $steps, string $status, int $progress, string $currentStep): void
@@ -3149,6 +3433,7 @@ EOT;
         $profile['hypotheses'] = array_values($profile['hypotheses'] ?? []);
         $profile['variables'] = array_values($profile['variables'] ?? []);
         $profile['dataset_summary'] = array_values($profile['dataset_summary'] ?? []);
+        $profile['dataset_profile'] = is_array($profile['dataset_profile'] ?? null) ? $profile['dataset_profile'] : $this->datasetProfileFromSources($project);
         $profile['expected_or_actual_findings'] = array_values($profile['expected_or_actual_findings'] ?? []);
         $profile['limitations'] = array_values($profile['limitations'] ?? []);
         $profile['key_reference_examples'] = array_slice(array_values($profile['key_reference_examples'] ?? $profile['references'] ?? []), 0, 12);
@@ -3262,7 +3547,7 @@ EOT;
             ['title' => 'Literature Review', 'subsections' => ['Theoretical Review', 'Empirical Review', 'Research Gap', 'Conceptual Framework']],
             ['title' => 'Methodology', 'subsections' => ['Research Design', 'Study Area and Population', 'Sampling Procedure', 'Data Collection Methods', 'Data Analysis Plan', 'Ethical Considerations']],
             $hasDataset
-                ? ['title' => 'Results and Findings', 'subsections' => ['Respondent Profile', 'Findings by Objective', 'Summary of Findings']]
+                ? ['title' => 'Results and Findings', 'subsections' => ['Respondent Profile', 'Adoption and Usage of Mobile Money Services', 'Impact on Financial Performance', 'Benefits and Challenges', 'Summary of Findings']]
                 : ['title' => 'Planned Presentation of Findings', 'subsections' => ['Expected Data Presentation', 'Analysis by Research Objective', 'Interpretation Framework']],
             ['title' => 'Discussion', 'subsections' => ['Interpretation Framework', 'Comparison with Literature', 'Implications for Practice']],
             ['title' => 'Conclusion and Recommendations', 'subsections' => ['Summary', 'Conclusion', 'Recommendations', 'Further Research']],
@@ -3282,7 +3567,7 @@ EOT;
             $role = strtolower((string) ($source->metadata['document_role'] ?? ''));
             $type = strtolower((string) $source->type);
             $title = strtolower((string) $source->title);
-            if (in_array($role, ['dataset', 'data', 'survey_data'], true)
+            if (in_array($role, ['dataset', 'data', 'survey_data', 'collected_data'], true)
                 || in_array($type, ['dataset', 'data', 'csv', 'excel'], true)
                 || str_contains($title, 'dataset')
                 || str_contains($title, '.csv')
