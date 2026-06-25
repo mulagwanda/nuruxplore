@@ -239,9 +239,7 @@
                         const data = await window.NuruAPI.sendMessage(this.projectUUID, msg, 'chat');
                         
                         if (data.created_project && data.workspace_url) {
-                            this.messages.push({ id: Date.now(), role: 'ai', content: (data.message || 'Project created.') + '
-
-Open: ' + data.workspace_url, isAction: true });
+                            this.messages.push({ id: Date.now(), role: 'ai', content: (data.message || 'Project created.') + '\n\nOpen: ' + data.workspace_url, isAction: true });
                             window.location.href = data.workspace_url;
                         } else if (data.action === 'edit' || data.document_updated || data.action === 'edit_title') {
                             this.messages.push({ 
