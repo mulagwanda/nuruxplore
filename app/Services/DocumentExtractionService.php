@@ -161,79 +161,255 @@ class DocumentExtractionService
 
     protected function extractXlsx(string $path): string
     {
-        $rows = $this->readXlsxRows($path, 1000);
+        $rows = $this->readXlsxRows($path, 2000);
         return $this->rowsToPipeText($rows);
     }
 
-    protected function readXlsxRows(string $path, int $maxRows = 1000): array
+    /**
+     * Read XLSX rows without relying only on PHP ZipArchive.
+     *
+     * Production note: some servers have multiple PHP versions. It is common for
+     * php8.3-fpm to have zip while php CLI points to php8.5 without zip, or vice versa.
+     * This method supports both ZipArchive and the Linux `unzip -p` binary so dataset
+     * extraction still works in either environment.
+     */
+    protected function readXlsxRows(string $path, int $maxRows = 2000): array
     {
-        $zip = new ZipArchive();
-        if ($zip->open($path) !== true) {
-            return [];
-        }
+        $shared = $this->readXlsxSharedStrings($path);
+        $sheetFiles = $this->xlsxWorksheetFiles($path);
+        $bestRows = [];
+        $bestScore = -1;
 
-        $shared = $this->readSharedStrings($zip);
-        $rows = [];
-
-        // Prefer first worksheet. Most uploaded field-data files use the first sheet as the dataset.
-        for ($sheet = 1; $sheet <= 3 && count($rows) < $maxRows; $sheet++) {
-            $sheetXml = $zip->getFromName("xl/worksheets/sheet{$sheet}.xml");
-            if (!$sheetXml) {
+        foreach ($sheetFiles as $sheetFile) {
+            $sheetXml = $this->xlsxEntry($path, $sheetFile);
+            if (trim($sheetXml) === '') {
                 continue;
             }
 
-            preg_match_all('/<row[^>]*>(.*?)<\/row>/s', $sheetXml, $rowMatches);
-            foreach ($rowMatches[1] ?? [] as $rowXml) {
-                if (count($rows) >= $maxRows) {
-                    break 2;
-                }
+            $rows = $this->parseXlsxWorksheetRows($sheetXml, $shared, $maxRows);
+            $score = $this->scoreDatasetRows($rows, $sheetFile);
 
-                $row = [];
-                preg_match_all('/<c\s+([^>]*)>(.*?)<\/c>/s', $rowXml, $cellMatches, PREG_SET_ORDER);
-                foreach ($cellMatches as $cellMatch) {
-                    $attrs = $cellMatch[1] ?? '';
-                    $cellXml = $cellMatch[2] ?? '';
-                    $colIndex = $this->xlsxColumnIndexFromAttributes($attrs);
-                    $value = $this->xlsxCellValue($attrs, $cellXml, $shared);
-                    if ($colIndex === null) {
-                        $colIndex = count($row);
-                    }
-                    $row[$colIndex] = $value;
-                }
+            if ($score > $bestScore) {
+                $bestScore = $score;
+                $bestRows = $rows;
+            }
+        }
 
-                if (!empty($row)) {
-                    ksort($row);
-                    $max = max(array_keys($row));
-                    $normalized = [];
-                    for ($i = 0; $i <= $max; $i++) {
-                        $normalized[] = trim((string) ($row[$i] ?? ''));
-                    }
-                    if (trim(implode('', $normalized)) !== '') {
-                        $rows[] = $normalized;
-                    }
+        return $bestRows;
+    }
+
+    protected function readXlsxSharedStrings(string $path): array
+    {
+        $shared = [];
+        $sharedXml = $this->xlsxEntry($path, 'xl/sharedStrings.xml');
+        if (trim($sharedXml) === '') {
+            return $shared;
+        }
+
+        preg_match_all('/<(?:[a-zA-Z0-9_]+:)?si[^>]*>(.*?)<\/(?:[a-zA-Z0-9_]+:)?si>/s', $sharedXml, $items);
+        foreach ($items[1] ?? [] as $itemXml) {
+            preg_match_all('/<(?:[a-zA-Z0-9_]+:)?t[^>]*>(.*?)<\/(?:[a-zA-Z0-9_]+:)?t>/s', $itemXml, $texts);
+            $value = implode('', $texts[1] ?? []);
+            $shared[] = html_entity_decode(strip_tags($value), ENT_QUOTES | ENT_XML1, 'UTF-8');
+        }
+
+        return $shared;
+    }
+
+    protected function xlsxWorksheetFiles(string $path): array
+    {
+        $files = [];
+
+        // Try to map sheet names from workbook.xml so we can prioritize Field_Data/Data sheets.
+        $workbookXml = $this->xlsxEntry($path, 'xl/workbook.xml');
+        $relsXml = $this->xlsxEntry($path, 'xl/_rels/workbook.xml.rels');
+        $rels = [];
+
+        if (trim($relsXml) !== '') {
+            preg_match_all('/<Relationship\s+([^>]+)>/i', $relsXml, $matches, PREG_SET_ORDER);
+            foreach ($matches as $m) {
+                $attrs = $m[1] ?? '';
+                $id = $this->xmlAttribute($attrs, 'Id');
+                $target = $this->xmlAttribute($attrs, 'Target');
+                if ($id && $target && str_contains($target, 'worksheets/')) {
+                    $target = ltrim($target, '/');
+                    $rels[$id] = str_starts_with($target, 'xl/') ? $target : 'xl/' . $target;
                 }
             }
         }
 
-        $zip->close();
+        if (trim($workbookXml) !== '') {
+            preg_match_all('/<(?:[a-zA-Z0-9_]+:)?sheet\s+([^>]+)\/?>(?:<\/(?:[a-zA-Z0-9_]+:)?sheet>)?/i', $workbookXml, $matches, PREG_SET_ORDER);
+            foreach ($matches as $m) {
+                $attrs = $m[1] ?? '';
+                $name = $this->xmlAttribute($attrs, 'name') ?: '';
+                $rid = $this->xmlAttribute($attrs, 'r:id') ?: $this->xmlAttribute($attrs, 'id');
+                $file = $rid && isset($rels[$rid]) ? $rels[$rid] : null;
+                if ($file) {
+                    $files[] = ['file' => $file, 'name' => $name];
+                }
+            }
+        }
+
+        // Fallback: try common worksheet files even without workbook relationships.
+        for ($i = 1; $i <= 10; $i++) {
+            $file = "xl/worksheets/sheet{$i}.xml";
+            if ($this->xlsxEntryExists($path, $file)) {
+                $already = false;
+                foreach ($files as $entry) {
+                    if (($entry['file'] ?? '') === $file) {
+                        $already = true;
+                        break;
+                    }
+                }
+                if (!$already) {
+                    $files[] = ['file' => $file, 'name' => "sheet{$i}"];
+                }
+            }
+        }
+
+        // Prefer likely data sheets, but still score every sheet.
+        usort($files, function ($a, $b) {
+            return $this->sheetNamePriority($b['name'] ?? '') <=> $this->sheetNamePriority($a['name'] ?? '');
+        });
+
+        return array_values(array_map(fn ($entry) => $entry['file'], $files));
+    }
+
+    protected function sheetNamePriority(string $name): int
+    {
+        $n = strtolower(str_replace([' ', '-'], '_', $name));
+        foreach (['field_data', 'fielddata', 'data', 'dataset', 'responses', 'survey', 'respondents', 'raw_data'] as $needle) {
+            if (str_contains($n, $needle)) {
+                return 100;
+            }
+        }
+        foreach (['codebook', 'summary', 'quick_summary', 'instructions', 'notes'] as $needle) {
+            if (str_contains($n, $needle)) {
+                return -50;
+            }
+        }
+        return 0;
+    }
+
+    protected function parseXlsxWorksheetRows(string $sheetXml, array $shared, int $maxRows): array
+    {
+        $rows = [];
+        preg_match_all('/<(?:[a-zA-Z0-9_]+:)?row\b[^>]*>(.*?)<\/(?:[a-zA-Z0-9_]+:)?row>/s', $sheetXml, $rowMatches);
+
+        foreach ($rowMatches[1] ?? [] as $rowXml) {
+            if (count($rows) >= $maxRows) {
+                break;
+            }
+
+            $row = [];
+            preg_match_all('/<(?:[a-zA-Z0-9_]+:)?c\s+([^>]*)>(.*?)<\/(?:[a-zA-Z0-9_]+:)?c>/s', $rowXml, $cellMatches, PREG_SET_ORDER);
+            foreach ($cellMatches as $cellMatch) {
+                $attrs = $cellMatch[1] ?? '';
+                $cellXml = $cellMatch[2] ?? '';
+                $colIndex = $this->xlsxColumnIndexFromAttributes($attrs);
+                $value = $this->xlsxCellValue($attrs, $cellXml, $shared);
+                if ($colIndex === null) {
+                    $colIndex = count($row);
+                }
+                $row[$colIndex] = $value;
+            }
+
+            if (!empty($row)) {
+                ksort($row);
+                $max = max(array_keys($row));
+                $normalized = [];
+                for ($i = 0; $i <= $max; $i++) {
+                    $normalized[] = trim((string) ($row[$i] ?? ''));
+                }
+                if (trim(implode('', $normalized)) !== '') {
+                    $rows[] = $normalized;
+                }
+            }
+        }
+
+        return $this->trimLeadingEmptyRows($rows);
+    }
+
+    protected function trimLeadingEmptyRows(array $rows): array
+    {
+        while (!empty($rows)) {
+            $nonEmpty = count(array_filter($rows[0], fn ($v) => trim((string) $v) !== ''));
+            if ($nonEmpty >= 2) {
+                break;
+            }
+            array_shift($rows);
+        }
         return $rows;
     }
 
-    protected function readSharedStrings(ZipArchive $zip): array
+    protected function scoreDatasetRows(array $rows, string $sheetFile = ''): int
     {
-        $shared = [];
-        $sharedXml = $zip->getFromName('xl/sharedStrings.xml');
-        if (!$sharedXml) {
-            return $shared;
+        if (count($rows) < 2) {
+            return -100;
         }
 
-        preg_match_all('/<si[^>]*>(.*?)<\/si>/s', $sharedXml, $items);
-        foreach ($items[1] ?? [] as $itemXml) {
-            preg_match_all('/<t[^>]*>(.*?)<\/t>/s', $itemXml, $texts);
-            $value = implode('', $texts[1] ?? []);
-            $shared[] = html_entity_decode(strip_tags($value), ENT_QUOTES | ENT_XML1, 'UTF-8');
+        $headers = array_map(fn ($v) => $this->normalizeDatasetHeader((string) $v), $rows[0]);
+        $nonEmptyHeaders = array_values(array_filter($headers, fn ($v) => $v !== '' && $v !== 'column'));
+        $score = count($rows) * 2 + count($nonEmptyHeaders) * 5;
+
+        $joined = implode(' ', $headers);
+        foreach (['respondent', 'gender', 'age', 'business', 'revenue', 'mobile_money', 'transaction', 'platform', 'challenge', 'benefit'] as $needle) {
+            if (str_contains($joined, $needle)) {
+                $score += 20;
+            }
         }
-        return $shared;
+
+        foreach (['codebook', 'quick_summary', 'summary'] as $bad) {
+            if (str_contains(strtolower($sheetFile), $bad) || str_contains($joined, $bad)) {
+                $score -= 80;
+            }
+        }
+
+        return $score;
+    }
+
+    protected function xlsxEntryExists(string $path, string $entry): bool
+    {
+        return $this->xlsxEntry($path, $entry) !== '';
+    }
+
+    protected function xlsxEntry(string $path, string $entry): string
+    {
+        if (class_exists(ZipArchive::class)) {
+            try {
+                $zip = new ZipArchive();
+                if ($zip->open($path) === true) {
+                    $content = $zip->getFromName($entry) ?: '';
+                    $zip->close();
+                    if ($content !== '') {
+                        return $content;
+                    }
+                }
+            } catch (\Throwable $e) {
+                Log::warning('ZipArchive XLSX entry read failed; trying unzip binary', [
+                    'entry' => $entry,
+                    'message' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        $unzip = trim((string) shell_exec('command -v unzip 2>/dev/null'));
+        if ($unzip === '') {
+            return '';
+        }
+
+        $command = escapeshellcmd($unzip) . ' -p ' . escapeshellarg($path) . ' ' . escapeshellarg($entry) . ' 2>/dev/null';
+        return (string) shell_exec($command);
+    }
+
+    protected function xmlAttribute(string $attrs, string $name): ?string
+    {
+        $pattern = '/\b' . preg_quote($name, '/') . '="([^"]*)"/i';
+        if (preg_match($pattern, $attrs, $m)) {
+            return html_entity_decode($m[1], ENT_QUOTES | ENT_XML1, 'UTF-8');
+        }
+        return null;
     }
 
     protected function xlsxColumnIndexFromAttributes(string $attrs): ?int
@@ -251,17 +427,19 @@ class DocumentExtractionService
 
     protected function xlsxCellValue(string $attrs, string $cellXml, array $shared): string
     {
-        if (preg_match('/<is[^>]*>.*?<t[^>]*>(.*?)<\/t>.*?<\/is>/s', $cellXml, $m)) {
+        if (preg_match('/<(?:[a-zA-Z0-9_]+:)?is[^>]*>.*?<(?:[a-zA-Z0-9_]+:)?t[^>]*>(.*?)<\/(?:[a-zA-Z0-9_]+:)?t>.*?<\/(?:[a-zA-Z0-9_]+:)?is>/s', $cellXml, $m)) {
             return html_entity_decode(strip_tags($m[1]), ENT_QUOTES | ENT_XML1, 'UTF-8');
         }
-        if (!preg_match('/<v[^>]*>(.*?)<\/v>/s', $cellXml, $m)) {
-            return '';
+
+        if (preg_match('/<(?:[a-zA-Z0-9_]+:)?v[^>]*>(.*?)<\/(?:[a-zA-Z0-9_]+:)?v>/s', $cellXml, $m)) {
+            $raw = html_entity_decode(trim(strip_tags($m[1])), ENT_QUOTES | ENT_XML1, 'UTF-8');
+            if (preg_match('/\bt="s"/i', $attrs) && is_numeric($raw) && isset($shared[(int) $raw])) {
+                return (string) $shared[(int) $raw];
+            }
+            return $raw;
         }
-        $raw = html_entity_decode(trim(strip_tags($m[1])), ENT_QUOTES | ENT_XML1, 'UTF-8');
-        if (preg_match('/\bt="s"/i', $attrs) && is_numeric($raw) && isset($shared[(int) $raw])) {
-            return (string) $shared[(int) $raw];
-        }
-        return $raw;
+
+        return '';
     }
 
     protected function rowsToPipeText(array $rows): string
